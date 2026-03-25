@@ -129,7 +129,12 @@ const elements = {
     weeklyMeta: document.getElementById("weekly-meta"),
     weeklyCardPreview: document.getElementById("weekly-card-preview"),
     weeklySeedGrid: document.getElementById("weekly-seed-grid"),
-    weeklySettingsList: document.getElementById("weekly-settings-list")
+    weeklySettingsList: document.getElementById("weekly-settings-list"),
+    weeklyCardFullscreenButton: document.getElementById("weekly-card-fullscreen-button"),
+    previewModal: document.getElementById("card-preview-modal"),
+    previewModalContent: document.getElementById("preview-modal-content"),
+    previewModalTitle: document.getElementById("preview-modal-title"),
+    previewModalClose: document.getElementById("preview-modal-close")
 };
 
 let resetTimerHandle = null;
@@ -178,6 +183,27 @@ function bindEvents() {
     elements.sizeFilter.addEventListener("change", applyFilters);
     elements.categoryFilter.addEventListener("change", applyFilters);
     elements.refreshButton.addEventListener("click", loadSubmissions);
+    if (elements.weeklyCardFullscreenButton) {
+        elements.weeklyCardFullscreenButton.addEventListener("click", () => {
+            if (!state.weekly) return;
+            openPreviewModal("Weekly Card Preview", buildWeeklyCardPreview(state.weekly, true));
+        });
+    }
+    if (elements.previewModalClose) {
+        elements.previewModalClose.addEventListener("click", closePreviewModal);
+    }
+    if (elements.previewModal) {
+        elements.previewModal.addEventListener("click", (event) => {
+            if (event.target === elements.previewModal || event.target.classList.contains("preview-modal-backdrop")) {
+                closePreviewModal();
+            }
+        });
+    }
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+            closePreviewModal();
+        }
+    });
 }
 
 async function loadSubmissions() {
@@ -248,7 +274,10 @@ function renderWeeklyChallenge() {
     elements.weeklyMeta.textContent = `Challenge ${weekly.challengeId || "--"} | resets ${formatResetAbsolute(weekly.nextResetEpochSeconds)}`;
     elements.weeklyCardPreview.className = "";
     elements.weeklyCardPreview.innerHTML = "";
-    elements.weeklyCardPreview.appendChild(buildWeeklyCardPreview(weekly));
+    elements.weeklyCardPreview.appendChild(buildWeeklyCardPreview(weekly, false));
+    if (elements.weeklyCardFullscreenButton) {
+        elements.weeklyCardFullscreenButton.disabled = !weekly.previewSize || !weekly.previewSlots.length;
+    }
 
     elements.weeklySeedGrid.innerHTML = "";
     elements.weeklySeedGrid.append(
@@ -270,13 +299,13 @@ function renderWeeklyChallenge() {
             const split = splitSettingLine(line);
             const rowEl = document.createElement("div");
             rowEl.className = "setting-line";
-            rowEl.innerHTML = `<span class="setting-key">${escapeHtml(split.key)}</span><span class="setting-value">${escapeHtml(split.value)}</span>`;
+            rowEl.innerHTML = `<span class="setting-key">${escapeHtml(split.key)}</span><span class="setting-value ${settingValueClass(split.value)}">${escapeHtml(split.value)}</span>`;
             elements.weeklySettingsList.appendChild(rowEl);
         });
     }
 }
 
-function buildWeeklyCardPreview(weekly) {
+function buildWeeklyCardPreview(weekly, fullscreen = false) {
     if (!weekly.previewSize || !weekly.previewSlots.length) {
         const empty = document.createElement("div");
         empty.className = "detail-empty";
@@ -291,7 +320,7 @@ function buildWeeklyCardPreview(weekly) {
         opponentCompletedSlotIds: [],
         teamColorId: 10,
         settingsLines: weekly.settingsLines
-    });
+    }, fullscreen);
 }
 
 function normalizeSubmissions(raw) {
@@ -483,7 +512,7 @@ function buildDetailRow(row) {
     return tr;
 }
 
-function buildCardPreview(row) {
+function buildCardPreview(row, fullscreen = false) {
     const wrap = document.createElement("div");
     if (!row.previewSize || (!row.previewSlots.length && !row.previewSlotIds.length)) {
         wrap.className = "detail-empty";
@@ -495,6 +524,9 @@ function buildCardPreview(row) {
     const opponent = new Set(row.opponentCompletedSlotIds);
     const preview = document.createElement("div");
     preview.className = "card-preview";
+    if (fullscreen) {
+        preview.classList.add("card-preview-fullscreen");
+    }
     preview.style.gridTemplateColumns = `repeat(${row.previewSize}, minmax(0, 1fr))`;
 
     const color = TEAM_COLORS[row.teamColorId] || TEAM_COLORS[10];
@@ -601,7 +633,7 @@ function buildSettingsPanel(row) {
         const split = splitSettingLine(line);
         const rowEl = document.createElement("div");
         rowEl.className = "setting-line";
-        rowEl.innerHTML = `<span class="setting-key">${escapeHtml(split.key)}</span><span class="setting-value">${escapeHtml(split.value)}</span>`;
+        rowEl.innerHTML = `<span class="setting-key">${escapeHtml(split.key)}</span><span class="setting-value ${settingValueClass(split.value)}">${escapeHtml(split.value)}</span>`;
         settings.appendChild(rowEl);
     });
 
@@ -617,6 +649,33 @@ function splitSettingLine(line) {
         key: line.slice(0, idx + 1),
         value: line.slice(idx + 1).trim()
     };
+}
+
+function settingValueClass(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (["on", "enabled", "true"].includes(normalized)) return "is-good";
+    if (["off", "disabled", "false"].includes(normalized)) return "is-bad";
+    if (normalized.includes("random")) return "is-warn";
+    if (normalized.includes("full") || normalized.includes("lockout") || normalized.includes("line")) return "is-warn";
+    return "";
+}
+
+function openPreviewModal(title, contentNode) {
+    if (!elements.previewModal || !elements.previewModalContent || !elements.previewModalTitle) return;
+    elements.previewModalTitle.textContent = title;
+    elements.previewModalContent.innerHTML = "";
+    elements.previewModalContent.appendChild(contentNode);
+    elements.previewModal.hidden = false;
+    document.body.classList.add("modal-open");
+}
+
+function closePreviewModal() {
+    if (!elements.previewModal) return;
+    elements.previewModal.hidden = true;
+    if (elements.previewModalContent) {
+        elements.previewModalContent.innerHTML = "";
+    }
+    document.body.classList.remove("modal-open");
 }
 
 function dedupeDetails(lines) {

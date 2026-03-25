@@ -80,6 +80,7 @@
             <section class="detail-preview">
                 <div class="detail-title">Weekly Card</div>
                 <div id="weekly-card-preview" class="detail-empty">Loading weekly card...</div>
+                <button id="weekly-card-fullscreen-button" type="button" class="weekly-card-button">Fullscreen Card Preview</button>
             </section>
             <section class="detail-meta">
                 <div class="detail-title">Weekly Seeds And Settings</div>
@@ -156,6 +157,17 @@
             </table>
         </div>
     </section>
+</div>
+
+<div id="card-preview-modal" class="preview-modal" hidden>
+    <div class="preview-modal-backdrop"></div>
+    <div class="preview-modal-panel">
+        <div class="preview-modal-header">
+            <h2 id="preview-modal-title">Card Preview</h2>
+            <button id="preview-modal-close" type="button" class="preview-modal-close">Close</button>
+        </div>
+        <div id="preview-modal-content" class="preview-modal-content"></div>
+    </div>
 </div>
 
 <template id="row-template">

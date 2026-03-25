@@ -27,6 +27,10 @@ body {
         linear-gradient(180deg, #0b111a 0%, #0d1825 44%, #0a1119 100%);
 }
 
+body.modal-open {
+    overflow: hidden;
+}
+
 .copy-feedback {
     position: fixed;
     right: 20px;
@@ -362,6 +366,11 @@ tbody tr.detail-row:hover {
     padding: 16px;
 }
 
+.weekly-card-button {
+    width: 100%;
+    margin-top: 12px;
+}
+
 .detail-title {
     margin-bottom: 12px;
     color: var(--muted);
@@ -374,6 +383,36 @@ tbody tr.detail-row:hover {
     display: grid;
     gap: 8px;
     width: min(100%, 320px);
+}
+
+.card-preview-fullscreen {
+    width: min(90vw, 860px);
+    gap: 12px;
+}
+
+.card-preview-fullscreen .preview-slot {
+    border-radius: 16px;
+}
+
+.card-preview-fullscreen .preview-content {
+    inset: 22px 10px 24px;
+    font-size: 13px;
+    -webkit-line-clamp: 5;
+}
+
+.card-preview-fullscreen .preview-slot-number {
+    left: 8px;
+    top: 7px;
+    font-size: 12px;
+}
+
+.card-preview-fullscreen .preview-slot-badge {
+    left: 8px;
+    right: 8px;
+    bottom: 7px;
+    min-height: 18px;
+    font-size: 11px;
+    line-height: 18px;
 }
 
 .preview-slot {
@@ -539,6 +578,68 @@ tbody tr.detail-row:hover {
 
 .setting-value {
     color: #f1f6ff;
+}
+
+.setting-value.is-good {
+    color: #83ff9a;
+}
+
+.setting-value.is-bad {
+    color: #ff8d8d;
+}
+
+.setting-value.is-warn {
+    color: #ffe082;
+}
+
+.preview-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: grid;
+    place-items: center;
+}
+
+.preview-modal[hidden] {
+    display: none;
+}
+
+.preview-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(6, 10, 16, 0.78);
+    backdrop-filter: blur(8px);
+}
+
+.preview-modal-panel {
+    position: relative;
+    z-index: 1;
+    width: min(94vw, 980px);
+    max-height: 90vh;
+    overflow: auto;
+    padding: 18px;
+    border-radius: 24px;
+    border: 1px solid var(--border);
+    background: rgba(13, 22, 34, 0.96);
+    box-shadow: var(--shadow);
+}
+
+.preview-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.preview-modal-close {
+    min-height: 38px;
+    padding: 0 14px;
+}
+
+.preview-modal-content {
+    display: flex;
+    justify-content: center;
 }
 
 .detail-empty {
