@@ -47,14 +47,14 @@
                 <p>
                     Requires a completed run with no commands or gamemode changes, played in singleplayer, with default gameplay settings,
                     default bingo world settings, no set world seed, no custom card or custom pool, no custom card maker card, no rarity
-                    changer preset, no blacklist preset, no whitelist preset, and default card difficulty.
+                    changer preset, no blacklist preset, no whitelist preset, no vote reroll unclaimed use, and default card difficulty.
                 </p>
             </article>
             <article class="rule-card">
                 <h2>Custom Leaderboard</h2>
                 <p>
-                    Any completed run from March 25, 2026 onward is eligible here if no commands or gamemode changes were used. Runs that
-                    change settings, use presets, use rerolls, use multiplayer, or otherwise fail the default requirements are treated as custom.
+                    Requires a completed run with no commands or gamemode changes and no vote reroll unclaimed use. Runs that change settings,
+                    use presets, use rerolls, use multiplayer, or otherwise fail the default requirements are treated as custom.
                 </p>
             </article>
         </div>
@@ -109,9 +109,9 @@
                     <th>Time</th>
                     <th>Leaderboard</th>
                     <th>Board</th>
+                    <th>Mode</th>
+                    <th>Difficulty</th>
                     <th>Finished</th>
-                    <th>Card Seed</th>
-                    <th>World Seed</th>
                 </tr>
                 </thead>
                 <tbody id="leaderboard-body">
@@ -131,9 +131,9 @@
         <td data-col="time"></td>
         <td data-col="leaderboard"></td>
         <td data-col="board"></td>
+        <td data-col="mode"></td>
+        <td data-col="difficulty"></td>
         <td data-col="finished"></td>
-        <td data-col="cardSeed"></td>
-        <td data-col="worldSeed"></td>
     </tr>
 </template>
 

@@ -2,6 +2,77 @@ const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/su
 const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
 const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774462867;
 const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
+const ITEM_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/item/";
+const MINECRAFT_ASSET_BASE = "https://mcasset.cloud/1.21.8/assets/";
+const LOCAL_ENTITY_TEXTURES = {
+    "minecraft:allay": "./assets/entity/allay/allay.png",
+    "minecraft:armadillo": "./assets/entity/armadillo.png",
+    "minecraft:bat": "./assets/entity/bat.png",
+    "minecraft:bee": "./assets/entity/bee/bee.png",
+    "minecraft:blaze": "./assets/entity/blaze.png",
+    "minecraft:bogged": "./assets/entity/skeleton/bogged.png",
+    "minecraft:breeze": "./assets/entity/breeze/breeze.png",
+    "minecraft:camel": "./assets/entity/camel/camel.png",
+    "minecraft:cat": "./assets/entity/cat/tabby.png",
+    "minecraft:cave_spider": "./assets/entity/spider/cave_spider.png",
+    "minecraft:chicken": "./assets/entity/chicken/temperate_chicken.png",
+    "minecraft:cow": "./assets/entity/cow/temperate_cow.png",
+    "minecraft:creaking": "./assets/entity/creaking/creaking.png",
+    "minecraft:creeper": "./assets/entity/creeper/creeper.png",
+    "minecraft:dolphin": "./assets/entity/dolphin.png",
+    "minecraft:donkey": "./assets/entity/horse/donkey.png",
+    "minecraft:drowned": "./assets/entity/zombie/drowned.png",
+    "minecraft:elder_guardian": "./assets/entity/guardian_elder.png",
+    "minecraft:ender_dragon": "./assets/entity/enderdragon/dragon.png",
+    "minecraft:enderman": "./assets/entity/enderman/enderman.png",
+    "minecraft:endermite": "./assets/entity/endermite.png",
+    "minecraft:evoker": "./assets/entity/illager/evoker.png",
+    "minecraft:fox": "./assets/entity/fox/fox.png",
+    "minecraft:frog": "./assets/entity/frog/temperate_frog.png",
+    "minecraft:ghast": "./assets/entity/ghast/ghast.png",
+    "minecraft:goat": "./assets/entity/goat/goat.png",
+    "minecraft:guardian": "./assets/entity/guardian.png",
+    "minecraft:hoglin": "./assets/entity/hoglin/hoglin.png",
+    "minecraft:horse": "./assets/entity/horse/horse_brown.png",
+    "minecraft:husk": "./assets/entity/zombie/husk.png",
+    "minecraft:iron_golem": "./assets/entity/iron_golem/iron_golem.png",
+    "minecraft:llama": "./assets/entity/llama/creamy.png",
+    "minecraft:magma_cube": "./assets/entity/slime/magmacube.png",
+    "minecraft:mooshroom": "./assets/entity/cow/red_mooshroom.png",
+    "minecraft:mule": "./assets/entity/horse/mule.png",
+    "minecraft:nautilus": "./assets/entity/nautilus/nautilus.png",
+    "minecraft:ocelot": "./assets/entity/cat/ocelot.png",
+    "minecraft:panda": "./assets/entity/panda/panda.png",
+    "minecraft:parrot": "./assets/entity/parrot/parrot_red_blue.png",
+    "minecraft:phantom": "./assets/entity/phantom.png",
+    "minecraft:pig": "./assets/entity/pig/temperate_pig.png",
+    "minecraft:piglin": "./assets/entity/piglin/piglin.png",
+    "minecraft:piglin_brute": "./assets/entity/piglin/piglin_brute.png",
+    "minecraft:pillager": "./assets/entity/illager/pillager.png",
+    "minecraft:polar_bear": "./assets/entity/bear/polarbear.png",
+    "minecraft:rabbit": "./assets/entity/rabbit/brown.png",
+    "minecraft:ravager": "./assets/entity/illager/ravager.png",
+    "minecraft:shulker": "./assets/entity/shulker/shulker_purple.png",
+    "minecraft:silverfish": "./assets/entity/silverfish.png",
+    "minecraft:skeleton": "./assets/entity/skeleton/skeleton.png",
+    "minecraft:slime": "./assets/entity/slime/slime.png",
+    "minecraft:snow_golem": "./assets/entity/snow_golem.png",
+    "minecraft:spider": "./assets/entity/spider/spider.png",
+    "minecraft:stray": "./assets/entity/skeleton/stray.png",
+    "minecraft:strider": "./assets/entity/strider/strider.png",
+    "minecraft:turtle": "./assets/entity/turtle/big_sea_turtle.png",
+    "minecraft:vex": "./assets/entity/illager/vex.png",
+    "minecraft:villager": "./assets/entity/villager/villager.png",
+    "minecraft:vindicator": "./assets/entity/illager/vindicator.png",
+    "minecraft:warden": "./assets/entity/warden/warden.png",
+    "minecraft:witch": "./assets/entity/witch.png",
+    "minecraft:wither_skeleton": "./assets/entity/skeleton/wither_skeleton.png",
+    "minecraft:wolf": "./assets/entity/wolf/wolf.png",
+    "minecraft:zoglin": "./assets/entity/hoglin/zoglin.png",
+    "minecraft:zombie": "./assets/entity/zombie/zombie.png",
+    "minecraft:zombie_villager": "./assets/entity/zombie_villager/zombie_villager.png",
+    "minecraft:zombified_piglin": "./assets/entity/piglin/zombified_piglin.png"
+};
 
 const TEAM_COLORS = {
     0: "#f9fffe",
@@ -92,6 +163,9 @@ function normalizeSubmissions(raw) {
     return items.map((row, index) => {
         const settingsLines = Array.isArray(row.settingsLines) ? row.settingsLines : [];
         const previewSize = Number(row.previewSize ?? row.boardSize ?? 0);
+        const previewSlots = Array.isArray(row.previewSlots)
+            ? row.previewSlots.map(normalizePreviewSlot)
+            : [];
         const previewSlotIds = Array.isArray(row.previewSlotIds) ? row.previewSlotIds.map((value) => String(value ?? "")) : [];
         const completedSlotIds = Array.isArray(row.completedSlotIds) ? row.completedSlotIds.map((value) => String(value ?? "")) : [];
         const opponentCompletedSlotIds = Array.isArray(row.opponentCompletedSlotIds) ? row.opponentCompletedSlotIds.map((value) => String(value ?? "")) : [];
@@ -105,9 +179,11 @@ function normalizeSubmissions(raw) {
             completed: Boolean(row.completed),
             participantCount: Number(row.participantCount ?? 0),
             commandsUsed: Boolean(row.commandsUsed),
+            voteRerollUsed: Boolean(row.voteRerollUsed),
             rerollsUsedCount: Number(row.rerollsUsedCount ?? 0),
             fakeRerollsUsedCount: Number(row.fakeRerollsUsedCount ?? 0),
             previewSize,
+            previewSlots: previewSlots.length ? previewSlots : previewSlotIds.map((id) => normalizePreviewSlot({ id, name: id, category: "", rarity: "" })),
             previewSlotIds,
             completedSlotIds,
             opponentCompletedSlotIds,
@@ -118,6 +194,8 @@ function normalizeSubmissions(raw) {
         normalized.isValid = normalized.invalidReason === "";
         normalized.leaderboardCategory = readSettingValue(settingsLines, "Leaderboard Category", "Custom");
         normalized.leaderboardCategoryReason = readSettingValue(settingsLines, "Leaderboard Category Reason", "");
+        normalized.mode = readSettingValue(settingsLines, "Mode", "--");
+        normalized.cardDifficulty = readSettingValue(settingsLines, "Card Difficulty", "normal");
         return normalized;
     });
 }
@@ -131,6 +209,7 @@ function computeInvalidReason(row) {
     }
     if (!row.completed) return "Card was not completed successfully";
     if (row.commandsUsed) return "Commands or gamemode changes were used";
+    if (row.voteRerollUsed) return "Vote reroll unclaimed was used";
     return "";
 }
 
@@ -200,19 +279,11 @@ function renderTable() {
         fragment.querySelector('[data-col="leaderboard"]').appendChild(leaderboardPill);
 
         fragment.querySelector('[data-col="board"]').textContent = row.previewSize > 0 ? `${row.previewSize}x${row.previewSize}` : "--";
+        fragment.querySelector('[data-col="mode"]').textContent = row.mode || "--";
+        fragment.querySelector('[data-col="difficulty"]').textContent = row.cardDifficulty || "--";
         fragment.querySelector('[data-col="finished"]').textContent = row.finishedAtEpochSeconds > 0
             ? new Date(row.finishedAtEpochSeconds * 1000).toLocaleString()
             : "--";
-
-        const cardCell = fragment.querySelector('[data-col="cardSeed"]');
-        cardCell.textContent = row.cardSeed || "(none)";
-        cardCell.classList.add("seed");
-        cardCell.title = row.cardSeed;
-
-        const worldCell = fragment.querySelector('[data-col="worldSeed"]');
-        worldCell.textContent = row.worldSeed || "(none)";
-        worldCell.classList.add("seed");
-        worldCell.title = row.worldSeed;
 
         elements.body.appendChild(fragment);
 
@@ -274,7 +345,8 @@ function buildCardPreview(row) {
         rowEl.style.gridTemplateColumns = `repeat(${row.previewSize}, 1fr)`;
         for (let x = 0; x < row.previewSize; x++) {
             const idx = y * row.previewSize + x;
-            const slotId = row.previewSlotIds[idx] || "";
+            const slotData = row.previewSlots[idx] || normalizePreviewSlot({ id: row.previewSlotIds[idx] || "" });
+            const slotId = slotData.id || "";
             const slot = document.createElement("div");
             slot.className = "preview-slot";
             if (completed.has(slotId)) {
@@ -289,8 +361,13 @@ function buildCardPreview(row) {
             const content = document.createElement("div");
             content.className = "preview-content";
             if (slotId && !isMaskedPreviewSlot(row)) {
-                content.textContent = slotId;
-                content.title = slotId;
+                const texture = createSlotTexture(slotData);
+                if (texture) {
+                    content.appendChild(texture);
+                } else {
+                    content.textContent = slotData.name || slotId;
+                }
+                content.title = buildSlotTooltip(slotData);
             } else {
                 content.classList.add("preview-mask");
                 content.textContent = slotId ? "?" : "";
@@ -320,7 +397,16 @@ function buildSeedGrid(row) {
 function buildSeedItem(label, value) {
     const item = document.createElement("div");
     item.className = "seed-item";
-    item.innerHTML = `<span class="seed-label">${escapeHtml(label)}</span><span class="seed-value">${escapeHtml(value)}</span>`;
+    const safeValue = String(value ?? "");
+    item.innerHTML = `
+        <span class="seed-label">${escapeHtml(label)}</span>
+        <span class="seed-value">${escapeHtml(safeValue)}</span>
+        <button type="button" class="seed-copy-button">Copy</button>
+    `;
+    item.querySelector(".seed-copy-button").addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await copyTextToClipboard(safeValue);
+    });
     return item;
 }
 
@@ -331,7 +417,7 @@ function buildSettingsPanel(row) {
     const lines = dedupeDetails([
         `Leaderboard: ${row.leaderboardCategory}`,
         row.leaderboardCategoryReason ? `Leaderboard Reason: ${row.leaderboardCategoryReason}` : "",
-        ...row.settingsLines,
+        ...row.settingsLines.filter((line) => !isDuplicateLeaderboardLine(line)),
         row.cardSeed ? `Card Seed (Full): ${row.cardSeed}` : "",
         row.worldSeed ? `Bingo World Seed (Full): ${row.worldSeed}` : ""
     ].filter(Boolean));
@@ -375,6 +461,13 @@ function dedupeDetails(lines) {
         out.push(line);
     });
     return out;
+}
+
+function isDuplicateLeaderboardLine(line) {
+    if (!line) return false;
+    return line.startsWith("Leaderboard Category:")
+        || line.startsWith("Leaderboard Category Reason:")
+        || line.startsWith("Leaderboard Reason:");
 }
 
 function findSeedLine(settingsLines, keys) {
@@ -449,6 +542,168 @@ function currentSeasonStartEpochSeconds() {
 
 function renderMessage(message) {
     elements.body.innerHTML = `<tr><td colspan="8" class="empty-state">${escapeHtml(message)}</td></tr>`;
+}
+
+function normalizePreviewSlot(slot) {
+    return {
+        id: String(slot?.id ?? ""),
+        name: String(slot?.name ?? slot?.id ?? ""),
+        category: String(slot?.category ?? ""),
+        rarity: String(slot?.rarity ?? ""),
+        questIcon: slot?.questIcon ?? null
+    };
+}
+
+function isQuestSlot(slot) {
+    return !!slot && (!!slot.category || slot.id.startsWith("quest.") || slot.id.startsWith("quest_"));
+}
+
+function buildSlotTooltip(slot) {
+    const parts = [slot.name || slot.id];
+    if (slot.category) parts.push(`Category: ${slot.category}`);
+    if (slot.rarity) parts.push(`Rarity: ${slot.rarity}`);
+    return parts.join("\n");
+}
+
+function createSlotTexture(slot) {
+    if (!slot || !slot.id) return null;
+    if (isQuestSlot(slot)) {
+        return createQuestIcon(slot);
+    }
+
+    const img = document.createElement("img");
+    img.className = "preview-item-icon";
+    img.alt = slot.name || slot.id;
+    img.loading = "lazy";
+    img.src = `${ITEM_TEXTURE_BASE}${slot.id.replace("minecraft:", "")}.png`;
+    img.onerror = () => {
+        const fallback = document.createElement("div");
+        fallback.className = "preview-item-fallback";
+        fallback.textContent = (slot.name || slot.id).trim().charAt(0).toUpperCase() || "?";
+        img.replaceWith(fallback);
+    };
+    return img;
+}
+
+function createQuestIcon(slot) {
+    const icon = slot.questIcon;
+    if (!icon) {
+        const badge = document.createElement("div");
+        badge.className = "preview-quest-badge";
+        badge.textContent = (slot.category || slot.name || "?").trim().charAt(0).toUpperCase() || "?";
+        return badge;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "preview-quest-wrap";
+
+    const main = createQuestLayer(icon.mainItemId, icon.mainTexture, icon.mainRegion, "preview-quest-main", icon.mainEntityId, icon.mainEntityBaby);
+    if (main) wrap.appendChild(main);
+
+    const corner = createQuestLayer(icon.cornerItemId, icon.cornerTexture, icon.cornerRegion, "preview-quest-corner", icon.cornerEntityId, icon.cornerEntityBaby);
+    if (corner) wrap.appendChild(corner);
+
+    if (icon.numberText) {
+        const number = document.createElement("div");
+        number.className = "preview-quest-number";
+        number.textContent = icon.numberText;
+        wrap.appendChild(number);
+    }
+
+    if (!wrap.children.length) {
+        const badge = document.createElement("div");
+        badge.className = "preview-quest-badge";
+        badge.textContent = (slot.category || slot.name || "?").trim().charAt(0).toUpperCase() || "?";
+        return badge;
+    }
+
+    return wrap;
+}
+
+function createQuestLayer(itemId, textureId, region, className, entityId = "", isBaby = false) {
+    if (itemId) {
+        const img = document.createElement("img");
+        img.className = `${className} preview-item-icon`;
+        img.alt = itemId;
+        img.loading = "lazy";
+        img.src = `${ITEM_TEXTURE_BASE}${itemId.replace("minecraft:", "")}.png`;
+        return img;
+    }
+
+    const entityTexture = resolveEntityTexture(entityId, isBaby);
+    if (entityTexture) {
+        const img = document.createElement("img");
+        img.className = className;
+        img.alt = entityId || "";
+        img.loading = "lazy";
+        img.src = entityTexture;
+        return img;
+    }
+
+    const textureUrl = resolveTextureUrl(textureId || region?.texture || "");
+    if (!textureUrl) return null;
+
+    if (region && region.width > 0 && region.height > 0 && region.textureWidth > 0 && region.textureHeight > 0) {
+        const div = document.createElement("div");
+        div.className = `${className} preview-quest-region`;
+        div.style.backgroundImage = `url("${textureUrl}")`;
+        div.style.backgroundSize = `${(region.textureWidth / region.width) * 100}% ${(region.textureHeight / region.height) * 100}%`;
+        div.style.backgroundPosition = `${(-region.u / Math.max(1, region.width)) * 100}% ${(-region.v / Math.max(1, region.height)) * 100}%`;
+        return div;
+    }
+
+    const img = document.createElement("img");
+    img.className = className;
+    img.alt = textureId || region?.texture || "";
+    img.loading = "lazy";
+    img.src = textureUrl;
+    return img;
+}
+
+function resolveEntityTexture(entityId, isBaby) {
+    const value = String(entityId || "");
+    if (!value) return "";
+    if (isBaby) {
+        const babyCandidate = LOCAL_ENTITY_TEXTURES[`${value}#baby`];
+        if (babyCandidate) return babyCandidate;
+    }
+    return LOCAL_ENTITY_TEXTURES[value] || "";
+}
+
+function resolveTextureUrl(textureId) {
+    const value = String(textureId || "");
+    if (!value) return "";
+    if (value.startsWith("minecraft:")) {
+        const parts = value.split(":");
+        return `${MINECRAFT_ASSET_BASE}${parts[0]}/${parts[1]}`;
+    }
+    if (value.startsWith("jamiebingo:")) {
+        const path = value.split(":")[1];
+        if (path === "textures/gui/advancement_icon.png") {
+            return "./assets/quest_icons/advancement_icon.png";
+        }
+        if (path.startsWith("textures/gui/quest_icons/")) {
+            return `./assets/quest_icons/${path.split("/").pop()}`;
+        }
+    }
+    return "";
+}
+
+async function copyTextToClipboard(value) {
+    const text = String(value ?? "");
+    if (!text || text === "(none)") return;
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        textArea.remove();
+    }
 }
 
 function readSettingValue(settingsLines, key, fallback) {

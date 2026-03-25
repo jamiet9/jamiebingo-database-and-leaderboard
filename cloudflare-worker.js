@@ -24,10 +24,12 @@ export default {
           completed,
           participant_count AS participantCount,
           commands_used AS commandsUsed,
+          vote_reroll_used AS voteRerollUsed,
           rerolls_used_count AS rerollsUsedCount,
           fake_rerolls_used_count AS fakeRerollsUsedCount,
           preview_size AS previewSize,
           team_color_id AS teamColorId,
+          preview_slots_json AS previewSlotsJson,
           preview_slot_ids_json AS previewSlotIdsJson,
           completed_slot_ids_json AS completedSlotIdsJson,
           opponent_completed_slot_ids_json AS opponentCompletedSlotIdsJson,
@@ -37,6 +39,7 @@ export default {
         FROM submissions
         WHERE completed = 1
           AND commands_used = 0
+          AND vote_reroll_used = 0
           AND finished_at_epoch_seconds >= ?
           AND finished_at_epoch_seconds >= ?
         ORDER BY submitted_at_epoch_seconds DESC
@@ -51,10 +54,12 @@ export default {
         completed: Boolean(row.completed),
         participantCount: Number(row.participantCount || 0),
         commandsUsed: Boolean(row.commandsUsed),
+        voteRerollUsed: Boolean(row.voteRerollUsed),
         rerollsUsedCount: Number(row.rerollsUsedCount || 0),
         fakeRerollsUsedCount: Number(row.fakeRerollsUsedCount || 0),
         previewSize: Number(row.previewSize || 0),
         teamColorId: Number(row.teamColorId || 0),
+        previewSlots: parseJsonArray(row.previewSlotsJson),
         previewSlotIds: parseJsonArray(row.previewSlotIdsJson),
         completedSlotIds: parseJsonArray(row.completedSlotIdsJson),
         opponentCompletedSlotIds: parseJsonArray(row.opponentCompletedSlotIdsJson),
@@ -85,10 +90,12 @@ export default {
           completed,
           participant_count,
           commands_used,
+          vote_reroll_used,
           rerolls_used_count,
           fake_rerolls_used_count,
           preview_size,
           team_color_id,
+          preview_slots_json,
           preview_slot_ids_json,
           completed_slot_ids_json,
           opponent_completed_slot_ids_json,
@@ -96,7 +103,7 @@ export default {
           leaderboard_category,
           leaderboard_category_reason,
           submitted_at_epoch_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         body.playerName || "Unknown",
         body.cardSeed || "",
@@ -106,10 +113,12 @@ export default {
         body.completed ? 1 : 0,
         Number(body.participantCount || 0),
         body.commandsUsed ? 1 : 0,
+        body.voteRerollUsed ? 1 : 0,
         Number(body.rerollsUsedCount || 0),
         Number(body.fakeRerollsUsedCount || 0),
         Number(body.previewSize || 0),
         Number(body.teamColorId || 0),
+        JSON.stringify(asArray(body.previewSlots)),
         JSON.stringify(asArray(body.previewSlotIds)),
         JSON.stringify(asArray(body.completedSlotIds)),
         JSON.stringify(asArray(body.opponentCompletedSlotIds)),
