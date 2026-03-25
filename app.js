@@ -411,10 +411,13 @@ function buildSeedItem(label, value) {
     item.className = "seed-item";
     const safeValue = String(value ?? "");
     item.innerHTML = `
-        <span class="seed-label">${escapeHtml(label)}</span>
-        <button type="button" class="seed-value seed-value-button" title="Copy to clipboard">${escapeHtml(safeValue)}</button>
+        <div class="seed-header">
+            <span class="seed-label">${escapeHtml(label)}</span>
+            <button type="button" class="seed-copy-button" title="Copy to clipboard">Copy</button>
+        </div>
+        <div class="seed-value">${escapeHtml(safeValue)}</div>
     `;
-    item.querySelector(".seed-value-button").addEventListener("click", async (event) => {
+    item.querySelector(".seed-copy-button").addEventListener("click", async (event) => {
         event.stopPropagation();
         await copyTextToClipboard(safeValue);
     });
