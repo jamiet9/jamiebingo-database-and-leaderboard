@@ -11,7 +11,10 @@
       "commandsUsed": false,
       "rerollsUsedCount": 0,
       "fakeRerollsUsedCount": 0,
-      "previewSize": 5
+      "previewSize": 5,
+      "settingsLines": [
+        "Leaderboard Category: Default"
+      ]
     },
     {
       "playerName": "ExampleDQ",
@@ -24,7 +27,11 @@
       "commandsUsed": true,
       "rerollsUsedCount": 0,
       "fakeRerollsUsedCount": 0,
-      "previewSize": 5
+      "previewSize": 5,
+      "settingsLines": [
+        "Leaderboard Category: Custom",
+        "Leaderboard Category Reason: Commands were used"
+      ]
     }
   ]
 }

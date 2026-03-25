@@ -59,6 +59,14 @@
                     <option value="all">All sizes</option>
                 </select>
             </label>
+            <label class="control">
+                <span>Leaderboard</span>
+                <select id="category-filter">
+                    <option value="all">All runs</option>
+                    <option value="default">Default only</option>
+                    <option value="custom">Custom only</option>
+                </select>
+            </label>
         </div>
         <div class="toolbar-meta">
             <span id="source-label">Source: ./data/submissions.json</span>
@@ -79,6 +87,7 @@
                     <th>Player</th>
                     <th>Time</th>
                     <th>Result</th>
+                    <th>Leaderboard</th>
                     <th>Board</th>
                     <th>Finished</th>
                     <th>Card Seed</th>
@@ -88,7 +97,7 @@
                 </thead>
                 <tbody id="leaderboard-body">
                 <tr>
-                    <td colspan="9" class="empty-state">Loading submissions...</td>
+                    <td colspan="10" class="empty-state">Loading submissions...</td>
                 </tr>
                 </tbody>
             </table>
@@ -102,6 +111,7 @@
         <td data-col="player"></td>
         <td data-col="time"></td>
         <td data-col="result"></td>
+        <td data-col="leaderboard"></td>
         <td data-col="board"></td>
         <td data-col="finished"></td>
         <td data-col="cardSeed"></td>

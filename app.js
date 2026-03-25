@@ -13,6 +13,7 @@ const elements = {
     validityFilter: document.getElementById("validity-filter"),
     sortOrder: document.getElementById("sort-order"),
     sizeFilter: document.getElementById("size-filter"),
+    categoryFilter: document.getElementById("category-filter"),
     refreshButton: document.getElementById("refresh-button"),
     sourceLabel: document.getElementById("source-label"),
     resultsMeta: document.getElementById("results-meta"),
@@ -36,6 +37,7 @@ function bindEvents() {
     elements.validityFilter.addEventListener("change", applyFilters);
     elements.sortOrder.addEventListener("change", applyFilters);
     elements.sizeFilter.addEventListener("change", applyFilters);
+    elements.categoryFilter.addEventListener("change", applyFilters);
     elements.refreshButton.addEventListener("click", loadSubmissions);
 }
 
@@ -71,10 +73,13 @@ function normalizeSubmissions(raw) {
             commandsUsed: Boolean(row.commandsUsed),
             rerollsUsedCount: Number(row.rerollsUsedCount ?? 0),
             fakeRerollsUsedCount: Number(row.fakeRerollsUsedCount ?? 0),
-            previewSize: Number(row.previewSize ?? row.boardSize ?? 0)
+            previewSize: Number(row.previewSize ?? row.boardSize ?? 0),
+            settingsLines: Array.isArray(row.settingsLines) ? row.settingsLines : []
         };
         normalized.invalidReason = computeInvalidReason(normalized);
         normalized.isValid = normalized.invalidReason === "";
+        normalized.leaderboardCategory = readSettingValue(normalized.settingsLines, "Leaderboard Category", normalized.isValid ? "Default" : "Custom");
+        normalized.leaderboardCategoryReason = readSettingValue(normalized.settingsLines, "Leaderboard Category Reason", "");
         return normalized;
     });
 }
@@ -101,12 +106,14 @@ function applyFilters() {
     const validity = elements.validityFilter.value;
     const sort = elements.sortOrder.value;
     const size = elements.sizeFilter.value;
+    const category = elements.categoryFilter.value;
 
     const filtered = state.rows.filter((row) => {
         if (search && !row.playerName.toLowerCase().includes(search)) return false;
         if (validity === "valid" && !row.isValid) return false;
         if (validity === "invalid" && row.isValid) return false;
         if (size !== "all" && String(row.previewSize) !== size) return false;
+        if (category !== "all" && row.leaderboardCategory.toLowerCase() !== category) return false;
         return true;
     });
 
@@ -140,6 +147,11 @@ function renderTable() {
         pill.textContent = row.isValid ? "Valid" : "Invalid";
         fragment.querySelector('[data-col="result"]').appendChild(pill);
 
+        const leaderboardPill = document.createElement("span");
+        leaderboardPill.className = `pill ${row.leaderboardCategory.toLowerCase() === "default" ? "valid" : "invalid"}`;
+        leaderboardPill.textContent = row.leaderboardCategory;
+        fragment.querySelector('[data-col="leaderboard"]').appendChild(leaderboardPill);
+
         fragment.querySelector('[data-col="board"]').textContent = row.previewSize > 0 ? `${row.previewSize}x${row.previewSize}` : "--";
         fragment.querySelector('[data-col="finished"]').textContent = row.finishedAtEpochSeconds > 0
             ? new Date(row.finishedAtEpochSeconds * 1000).toLocaleString()
@@ -156,7 +168,9 @@ function renderTable() {
         worldCell.title = row.worldSeed;
 
         const reasonCell = fragment.querySelector('[data-col="reason"]');
-        reasonCell.textContent = row.isValid ? "Eligible" : row.invalidReason;
+        reasonCell.textContent = row.isValid
+            ? (row.leaderboardCategoryReason || "Eligible")
+            : row.invalidReason;
         reasonCell.className = `reason ${row.isValid ? "" : "invalid"}`.trim();
 
         elements.body.appendChild(fragment);
@@ -174,7 +188,15 @@ function updateStats() {
 }
 
 function renderMessage(message) {
-    elements.body.innerHTML = `<tr><td colspan="9" class="empty-state">${escapeHtml(message)}</td></tr>`;
+    elements.body.innerHTML = `<tr><td colspan="10" class="empty-state">${escapeHtml(message)}</td></tr>`;
+}
+
+function readSettingValue(settingsLines, key, fallback) {
+    if (!Array.isArray(settingsLines)) return fallback;
+    const prefix = `${key}:`;
+    const line = settingsLines.find((value) => typeof value === "string" && value.startsWith(prefix));
+    if (!line) return fallback;
+    return line.slice(prefix.length).trim() || fallback;
 }
 
 function formatDuration(totalSeconds) {
