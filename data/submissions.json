@@ -1,0 +1,30 @@
+{
+  "submissions": [
+    {
+      "playerName": "ExampleRunner",
+      "cardSeed": "demo-card-seed-001",
+      "worldSeed": "demo-world-seed-001",
+      "durationSeconds": 1432,
+      "finishedAtEpochSeconds": 1774406400,
+      "completed": true,
+      "participantCount": 1,
+      "commandsUsed": false,
+      "rerollsUsedCount": 0,
+      "fakeRerollsUsedCount": 0,
+      "previewSize": 5
+    },
+    {
+      "playerName": "ExampleDQ",
+      "cardSeed": "demo-card-seed-002",
+      "worldSeed": "demo-world-seed-002",
+      "durationSeconds": 1560,
+      "finishedAtEpochSeconds": 1774492800,
+      "completed": true,
+      "participantCount": 1,
+      "commandsUsed": true,
+      "rerollsUsedCount": 0,
+      "fakeRerollsUsedCount": 0,
+      "previewSize": 5
+    }
+  ]
+}
