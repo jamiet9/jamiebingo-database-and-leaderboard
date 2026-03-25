@@ -237,6 +237,20 @@ td {
     text-align: left;
 }
 
+.player-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.player-head {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    image-rendering: pixelated;
+    box-shadow: 0 0 0 1px rgba(135, 173, 212, 0.24);
+}
+
 tbody tr:hover {
     background: rgba(38, 57, 84, 0.36);
 }
@@ -490,12 +504,17 @@ tbody tr.detail-row:hover {
     word-break: break-all;
 }
 
-.seed-copy-button {
-    grid-column: 2 / 3;
-    grid-row: 1 / span 2;
-    min-height: 34px;
-    padding: 0 12px;
-    font-size: 12px;
+.seed-value-button {
+    appearance: none;
+    display: block;
+    width: 100%;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #d4e6ff;
+    text-align: left;
+    cursor: pointer;
 }
 
 .settings-list {

@@ -270,7 +270,18 @@ function renderTable() {
         });
 
         fragment.querySelector('[data-col="rank"]').textContent = String(index + 1);
-        fragment.querySelector('[data-col="player"]').textContent = row.playerName;
+        const playerCell = fragment.querySelector('[data-col="player"]');
+        const playerWrap = document.createElement("div");
+        playerWrap.className = "player-cell";
+        const playerHead = document.createElement("img");
+        playerHead.className = "player-head";
+        playerHead.alt = row.playerName;
+        playerHead.loading = "lazy";
+        playerHead.src = `https://mc-heads.net/avatar/${encodeURIComponent(row.playerName)}/16`;
+        const playerName = document.createElement("span");
+        playerName.textContent = row.playerName;
+        playerWrap.append(playerHead, playerName);
+        playerCell.appendChild(playerWrap);
         fragment.querySelector('[data-col="time"]').textContent = formatDuration(row.durationSeconds);
 
         const leaderboardPill = document.createElement("span");
@@ -327,7 +338,7 @@ function buildDetailRow(row) {
 
 function buildCardPreview(row) {
     const wrap = document.createElement("div");
-    if (!row.previewSize || !row.previewSlotIds.length) {
+    if (!row.previewSize || (!row.previewSlots.length && !row.previewSlotIds.length)) {
         wrap.className = "detail-empty";
         wrap.textContent = "This run does not include card preview data yet.";
         return wrap;
@@ -400,10 +411,9 @@ function buildSeedItem(label, value) {
     const safeValue = String(value ?? "");
     item.innerHTML = `
         <span class="seed-label">${escapeHtml(label)}</span>
-        <span class="seed-value">${escapeHtml(safeValue)}</span>
-        <button type="button" class="seed-copy-button">Copy</button>
+        <button type="button" class="seed-value seed-value-button" title="Copy to clipboard">${escapeHtml(safeValue)}</button>
     `;
-    item.querySelector(".seed-copy-button").addEventListener("click", async (event) => {
+    item.querySelector(".seed-value-button").addEventListener("click", async (event) => {
         event.stopPropagation();
         await copyTextToClipboard(safeValue);
     });
@@ -418,8 +428,6 @@ function buildSettingsPanel(row) {
         `Leaderboard: ${row.leaderboardCategory}`,
         row.leaderboardCategoryReason ? `Leaderboard Reason: ${row.leaderboardCategoryReason}` : "",
         ...row.settingsLines.filter((line) => !isDuplicateLeaderboardLine(line)),
-        row.cardSeed ? `Card Seed (Full): ${row.cardSeed}` : "",
-        row.worldSeed ? `Bingo World Seed (Full): ${row.worldSeed}` : ""
     ].filter(Boolean));
 
     if (!lines.length) {
@@ -467,7 +475,9 @@ function isDuplicateLeaderboardLine(line) {
     if (!line) return false;
     return line.startsWith("Leaderboard Category:")
         || line.startsWith("Leaderboard Category Reason:")
-        || line.startsWith("Leaderboard Reason:");
+        || line.startsWith("Leaderboard Reason:")
+        || line.startsWith("Card Seed")
+        || line.startsWith("Bingo World Seed");
 }
 
 function findSeedLine(settingsLines, keys) {
@@ -590,7 +600,7 @@ function createQuestIcon(slot) {
     if (!icon) {
         const badge = document.createElement("div");
         badge.className = "preview-quest-badge";
-        badge.textContent = (slot.category || slot.name || "?").trim().charAt(0).toUpperCase() || "?";
+        badge.textContent = "Q";
         return badge;
     }
 
@@ -613,7 +623,7 @@ function createQuestIcon(slot) {
     if (!wrap.children.length) {
         const badge = document.createElement("div");
         badge.className = "preview-quest-badge";
-        badge.textContent = (slot.category || slot.name || "?").trim().charAt(0).toUpperCase() || "?";
+        badge.textContent = "Q";
         return badge;
     }
 
