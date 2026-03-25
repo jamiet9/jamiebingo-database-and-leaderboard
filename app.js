@@ -192,6 +192,7 @@ function normalizeSubmissions(raw) {
             playerName: String(row.playerName ?? row.player ?? "Unknown"),
             cardSeed: String(row.cardSeed ?? ""),
             worldSeed: String(row.worldSeed ?? ""),
+            settingsSeed: String(row.settingsSeed ?? ""),
             durationSeconds: Number(row.durationSeconds ?? 0),
             finishedAtEpochSeconds: Number(row.finishedAtEpochSeconds ?? row.finishedAt ?? 0),
             completed: Boolean(row.completed),
@@ -423,10 +424,11 @@ function buildSeedGrid(row) {
 
     const cardSeed = buildSeedItem("Card Seed", row.cardSeed || "(none)");
     const worldSeed = buildSeedItem("Bingo World Seed", row.worldSeed || "(none)");
+    const settingsSeed = buildSeedItem("Settings Seed", row.settingsSeed || "(none)");
     const blacklistSeed = buildSeedItem("Blacklist/Whitelist Seed", findSeedLine(row.settingsLines, ["Blacklist Seed", "Blacklist/Whitelist Seed", "Whitelist Seed"]) || "(none)");
     const raritySeed = buildSeedItem("Rarity Changer Seed", findSeedLine(row.settingsLines, ["Rarity Seed", "Rarity Changer Seed"]) || "(none)");
 
-    grid.append(cardSeed, worldSeed, blacklistSeed, raritySeed);
+    grid.append(cardSeed, worldSeed, settingsSeed, blacklistSeed, raritySeed);
     return grid;
 }
 
@@ -505,7 +507,8 @@ function isDuplicateLeaderboardLine(line) {
         || line.startsWith("Leaderboard Category Reason:")
         || line.startsWith("Leaderboard Reason:")
         || line.startsWith("Card Seed")
-        || line.startsWith("Bingo World Seed");
+        || line.startsWith("Bingo World Seed")
+        || line.startsWith("Settings Seed");
 }
 
 function findSeedLine(settingsLines, keys) {

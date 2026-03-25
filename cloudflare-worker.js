@@ -19,6 +19,7 @@ export default {
           player_name AS playerName,
           card_seed AS cardSeed,
           world_seed AS worldSeed,
+          settings_seed AS settingsSeed,
           duration_seconds AS durationSeconds,
           finished_at_epoch_seconds AS finishedAtEpochSeconds,
           completed,
@@ -85,6 +86,7 @@ export default {
           player_name,
           card_seed,
           world_seed,
+          settings_seed,
           duration_seconds,
           finished_at_epoch_seconds,
           completed,
@@ -103,11 +105,12 @@ export default {
           leaderboard_category,
           leaderboard_category_reason,
           submitted_at_epoch_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         body.playerName || "Unknown",
         body.cardSeed || "",
         body.worldSeed || "",
+        body.settingsSeed || "",
         Number(body.durationSeconds || 0),
         Number(body.finishedAtEpochSeconds || 0),
         body.completed ? 1 : 0,
