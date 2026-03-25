@@ -3,6 +3,7 @@ const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
 const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774462867;
 const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 const ITEM_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/item/";
+const BLOCK_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/block/";
 const MINECRAFT_ASSET_BASE = "https://mcasset.cloud/1.21.8/assets/";
 const LOCAL_ENTITY_TEXTURES = {
     "minecraft:allay": "./assets/entity/allay/allay.png",
@@ -589,8 +590,14 @@ function createSlotTexture(slot) {
     img.className = "preview-item-icon";
     img.alt = slot.name || slot.id;
     img.loading = "lazy";
-    img.src = `${ITEM_TEXTURE_BASE}${slot.id.replace("minecraft:", "")}.png`;
+    const path = slot.id.replace("minecraft:", "");
+    img.src = `${ITEM_TEXTURE_BASE}${path}.png`;
     img.onerror = () => {
+        if (!img.dataset.triedBlockTexture) {
+            img.dataset.triedBlockTexture = "true";
+            img.src = `${BLOCK_TEXTURE_BASE}${path}.png`;
+            return;
+        }
         const fallback = document.createElement("div");
         fallback.className = "preview-item-fallback";
         fallback.textContent = (slot.name || slot.id).trim().charAt(0).toUpperCase() || "?";
