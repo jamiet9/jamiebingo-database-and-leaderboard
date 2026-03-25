@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>JamieBingo Leaderboard</title>
+    <title>JamieBingo Weekly Leaderboard</title>
     <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -11,9 +11,9 @@
     <header class="hero">
         <div class="hero-copy">
             <p class="eyebrow">JamieBingo Community Runs</p>
-            <h1>Leaderboard</h1>
+            <h1>Weekly Leaderboard</h1>
             <p class="hero-text">
-                Track fastest valid clears, compare recent submissions, and see how the community is playing.
+                Track the current week's fastest valid clears, compare recent submissions, and see how the community is playing.
             </p>
         </div>
         <div class="hero-stats">
@@ -33,8 +33,33 @@
                 <span class="stat-label">Best Custom Time</span>
                 <strong id="best-custom-time">--:--</strong>
             </div>
+            <div class="stat-card">
+                <span class="stat-label">Next Reset In</span>
+                <strong id="next-reset-time">--:--:--</strong>
+            </div>
         </div>
     </header>
+
+    <section class="rules-panel">
+        <div class="rules-grid">
+            <article class="rule-card">
+                <h2>Default Leaderboard</h2>
+                <p>
+                    Requires a completed run with no commands or gamemode changes, played in singleplayer, with default gameplay settings,
+                    default bingo world settings, no set world seed, no custom card or custom pool, no custom card maker card, no rarity
+                    changer preset, no blacklist preset, no whitelist preset, and default card difficulty.
+                </p>
+            </article>
+            <article class="rule-card">
+                <h2>Custom Leaderboard</h2>
+                <p>
+                    Any completed run from March 25, 2026 onward is eligible here if no commands or gamemode changes were used. Runs that
+                    change settings, use presets, use rerolls, use multiplayer, or otherwise fail the default requirements are treated as custom.
+                </p>
+            </article>
+        </div>
+        <p class="rules-note">The weekly leaderboard resets every 7 days. Older submissions are hidden automatically when the next season begins.</p>
+    </section>
 
     <section class="toolbar-panel">
         <div class="toolbar-grid">

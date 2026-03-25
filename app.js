@@ -1,4 +1,7 @@
 const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
+const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
+const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774462867;
+const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 
 const TEAM_COLORS = {
     0: "#f9fffe",
@@ -23,7 +26,8 @@ const state = {
     rows: [],
     filtered: [],
     source: DEFAULT_SOURCE,
-    openRowId: null
+    openRowId: null,
+    nextResetEpochSeconds: fallbackNextResetEpochSeconds()
 };
 
 const elements = {
@@ -39,8 +43,11 @@ const elements = {
     defaultCount: document.getElementById("default-count"),
     customCount: document.getElementById("custom-count"),
     bestDefaultTime: document.getElementById("best-default-time"),
-    bestCustomTime: document.getElementById("best-custom-time")
+    bestCustomTime: document.getElementById("best-custom-time"),
+    nextResetTime: document.getElementById("next-reset-time")
 };
+
+let resetTimerHandle = null;
 
 bootstrap();
 
@@ -49,6 +56,7 @@ async function bootstrap() {
     state.source = querySource || DEFAULT_SOURCE;
     elements.sourceLabel.textContent = `Source: ${state.source}`;
     bindEvents();
+    startResetTimer();
     await loadSubmissions();
 }
 
@@ -66,10 +74,12 @@ async function loadSubmissions() {
         const response = await fetch(state.source, { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const raw = await response.json();
+        state.nextResetEpochSeconds = Number(raw?.nextResetEpochSeconds ?? fallbackNextResetEpochSeconds());
         state.rows = normalizeSubmissions(raw).filter((row) => row.isValid);
         populateSizeFilter(state.rows);
         applyFilters();
     } catch (error) {
+        state.nextResetEpochSeconds = fallbackNextResetEpochSeconds();
         state.rows = [];
         state.filtered = [];
         renderMessage(`Could not load submissions: ${error.message}`);
@@ -113,10 +123,14 @@ function normalizeSubmissions(raw) {
 }
 
 function computeInvalidReason(row) {
+    if (row.finishedAtEpochSeconds < currentSeasonStartEpochSeconds()) {
+        return "Run is from a previous weekly reset";
+    }
+    if (row.finishedAtEpochSeconds < LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS) {
+        return "Run was completed before March 25, 2026";
+    }
     if (!row.completed) return "Card was not completed successfully";
-    if (row.participantCount !== 1) return "Must be 1 player only";
-    if (row.commandsUsed) return "Commands were used";
-    if (row.rerollsUsedCount > 0 || row.fakeRerollsUsedCount > 0) return "Rerolls were used";
+    if (row.commandsUsed) return "Commands or gamemode changes were used";
     return "";
 }
 
@@ -391,6 +405,46 @@ function bestTimeFor(rows) {
     if (!rows.length) return "--:--";
     const best = rows.slice().sort((a, b) => a.durationSeconds - b.durationSeconds)[0];
     return formatDuration(best.durationSeconds);
+}
+
+function startResetTimer() {
+    updateResetTimer();
+    if (resetTimerHandle !== null) {
+        window.clearInterval(resetTimerHandle);
+    }
+    resetTimerHandle = window.setInterval(updateResetTimer, 1000);
+}
+
+function updateResetTimer() {
+    if (!elements.nextResetTime) return;
+    const now = Math.floor(Date.now() / 1000);
+    const remaining = Math.max(0, state.nextResetEpochSeconds - now);
+    elements.nextResetTime.textContent = formatResetCountdown(remaining);
+}
+
+function formatResetCountdown(totalSeconds) {
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (days > 0) {
+        return `${days}d ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`;
+    }
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function fallbackNextResetEpochSeconds() {
+    return currentSeasonStartEpochSeconds() + WEEKLY_RESET_PERIOD_SECONDS;
+}
+
+function currentSeasonStartEpochSeconds() {
+    const now = Math.floor(Date.now() / 1000);
+    if (now <= WEEKLY_RESET_ANCHOR_EPOCH_SECONDS) {
+        return WEEKLY_RESET_ANCHOR_EPOCH_SECONDS;
+    }
+    const elapsed = now - WEEKLY_RESET_ANCHOR_EPOCH_SECONDS;
+    const cycles = Math.floor(elapsed / WEEKLY_RESET_PERIOD_SECONDS);
+    return WEEKLY_RESET_ANCHOR_EPOCH_SECONDS + cycles * WEEKLY_RESET_PERIOD_SECONDS;
 }
 
 function renderMessage(message) {

@@ -34,6 +34,7 @@ body {
 }
 
 .hero,
+.rules-panel,
 .toolbar-panel,
 .table-panel {
     background: var(--panel);
@@ -49,6 +50,40 @@ body {
     gap: 20px;
     padding: 28px;
     margin-bottom: 18px;
+}
+
+.rules-panel {
+    padding: 18px 20px;
+    margin-bottom: 18px;
+}
+
+.rules-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.rule-card {
+    padding: 16px 18px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(26, 41, 61, 0.94), rgba(13, 23, 36, 0.94));
+    border: 1px solid rgba(142, 182, 221, 0.16);
+}
+
+.rule-card h2 {
+    margin-bottom: 10px;
+    font-size: 18px;
+}
+
+.rule-card p {
+    color: var(--muted);
+    line-height: 1.55;
+}
+
+.rules-note {
+    margin-top: 14px;
+    color: var(--muted);
+    line-height: 1.5;
 }
 
 .eyebrow {
@@ -403,6 +438,7 @@ tbody tr.detail-row:hover {
 
 @media (max-width: 980px) {
     .hero,
+    .rules-grid,
     .toolbar-grid {
         grid-template-columns: 1fr;
     }

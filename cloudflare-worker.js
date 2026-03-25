@@ -1,3 +1,7 @@
+const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
+const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774462867;
+const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -9,6 +13,7 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/submissions") {
+      const seasonStart = currentSeasonStart();
       const { results } = await env.DB.prepare(`
         SELECT
           player_name AS playerName,
@@ -31,12 +36,11 @@ export default {
           leaderboard_category_reason AS leaderboardCategoryReason
         FROM submissions
         WHERE completed = 1
-          AND participant_count = 1
           AND commands_used = 0
-          AND rerolls_used_count = 0
-          AND fake_rerolls_used_count = 0
+          AND finished_at_epoch_seconds >= ?
+          AND finished_at_epoch_seconds >= ?
         ORDER BY submitted_at_epoch_seconds DESC
-      `).all();
+      `).bind(LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS, seasonStart).all();
 
       const submissions = results.map((row) => ({
         playerName: row.playerName,
@@ -59,7 +63,11 @@ export default {
         leaderboardCategoryReason: row.leaderboardCategoryReason || ""
       }));
 
-      return Response.json({ submissions }, {
+      return Response.json({
+        submissions,
+        seasonStartEpochSeconds: seasonStart,
+        nextResetEpochSeconds: seasonStart + WEEKLY_RESET_PERIOD_SECONDS
+      }, {
         headers: corsHeaders()
       });
     }
@@ -139,4 +147,14 @@ function parseJsonArray(value) {
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function currentSeasonStart() {
+  const now = Math.floor(Date.now() / 1000);
+  if (now <= WEEKLY_RESET_ANCHOR_EPOCH_SECONDS) {
+    return WEEKLY_RESET_ANCHOR_EPOCH_SECONDS;
+  }
+  const elapsed = now - WEEKLY_RESET_ANCHOR_EPOCH_SECONDS;
+  const cycles = Math.floor(elapsed / WEEKLY_RESET_PERIOD_SECONDS);
+  return WEEKLY_RESET_ANCHOR_EPOCH_SECONDS + cycles * WEEKLY_RESET_PERIOD_SECONDS;
 }
