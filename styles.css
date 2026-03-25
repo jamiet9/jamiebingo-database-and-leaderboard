@@ -27,6 +27,28 @@ body {
         linear-gradient(180deg, #0b111a 0%, #0d1825 44%, #0a1119 100%);
 }
 
+.copy-feedback {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 1000;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(126, 167, 209, 0.22);
+    background: rgba(14, 24, 38, 0.94);
+    color: #eef5ff;
+    box-shadow: var(--shadow);
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.copy-feedback.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
 .page-shell {
     width: min(1280px, calc(100vw - 32px));
     margin: 0 auto;

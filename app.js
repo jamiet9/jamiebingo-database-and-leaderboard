@@ -98,7 +98,8 @@ const state = {
     filtered: [],
     source: DEFAULT_SOURCE,
     openRowId: null,
-    nextResetEpochSeconds: fallbackNextResetEpochSeconds()
+    nextResetEpochSeconds: fallbackNextResetEpochSeconds(),
+    copyFeedbackTimer: null
 };
 
 const elements = {
@@ -565,7 +566,7 @@ function normalizePreviewSlot(slot) {
 }
 
 function isQuestSlot(slot) {
-    return !!slot && (!!slot.category || slot.id.startsWith("quest.") || slot.id.startsWith("quest_"));
+    return !!slot && typeof slot.id === "string" && (slot.id.startsWith("quest.") || slot.id.startsWith("quest_"));
 }
 
 function buildSlotTooltip(slot) {
@@ -714,6 +715,26 @@ async function copyTextToClipboard(value) {
         document.execCommand("copy");
         textArea.remove();
     }
+    showCopyFeedback("Copied to clipboard");
+}
+
+function showCopyFeedback(message) {
+    let node = document.getElementById("copy-feedback");
+    if (!node) {
+        node = document.createElement("div");
+        node.id = "copy-feedback";
+        node.className = "copy-feedback";
+        document.body.appendChild(node);
+    }
+    node.textContent = message;
+    node.classList.add("is-visible");
+    if (state.copyFeedbackTimer !== null) {
+        window.clearTimeout(state.copyFeedbackTimer);
+    }
+    state.copyFeedbackTimer = window.setTimeout(() => {
+        node.classList.remove("is-visible");
+        state.copyFeedbackTimer = null;
+    }, 1400);
 }
 
 function readSettingValue(settingsLines, key, fallback) {
