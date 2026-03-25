@@ -129,9 +129,14 @@ let resetTimerHandle = null;
 bootstrap();
 
 async function bootstrap() {
-    const querySource = new URLSearchParams(window.location.search).get("source");
+    const params = new URLSearchParams(window.location.search);
+    const querySource = params.get("source");
     state.source = querySource || DEFAULT_SOURCE;
     elements.sourceLabel.textContent = `Source: ${state.source}`;
+    const queryCategory = (params.get("category") || "").toLowerCase();
+    if (["default", "custom", "weekly"].includes(queryCategory)) {
+        elements.categoryFilter.value = queryCategory;
+    }
     bindEvents();
     startResetTimer();
     await loadItemTextureMap();
@@ -207,7 +212,9 @@ function normalizeSubmissions(raw) {
             completedSlotIds,
             opponentCompletedSlotIds,
             teamColorId: Number(row.teamColorId ?? 10),
-            settingsLines
+            settingsLines,
+            weeklyChallenge: Boolean(row.weeklyChallenge),
+            weeklyChallengeId: String(row.weeklyChallengeId ?? "")
         };
         normalized.invalidReason = computeInvalidReason(normalized);
         normalized.isValid = normalized.invalidReason === "";
@@ -250,6 +257,7 @@ function applyFilters() {
     const filtered = state.rows.filter((row) => {
         if (search && !row.playerName.toLowerCase().includes(search)) return false;
         if (size !== "all" && String(row.previewSize) !== size) return false;
+        if (category === "weekly") return row.weeklyChallenge;
         if (category !== "all" && row.leaderboardCategory.toLowerCase() !== category) return false;
         return true;
     });
@@ -307,6 +315,13 @@ function renderTable() {
         leaderboardPill.className = `pill ${row.leaderboardCategory.toLowerCase() === "default" ? "valid" : "invalid"}`;
         leaderboardPill.textContent = row.leaderboardCategory;
         fragment.querySelector('[data-col="leaderboard"]').appendChild(leaderboardPill);
+        if (row.weeklyChallenge) {
+            const weeklyPill = document.createElement("span");
+            weeklyPill.className = "pill valid";
+            weeklyPill.textContent = "Weekly";
+            fragment.querySelector('[data-col="leaderboard"]').appendChild(document.createTextNode(" "));
+            fragment.querySelector('[data-col="leaderboard"]').appendChild(weeklyPill);
+        }
 
         fragment.querySelector('[data-col="board"]').textContent = row.previewSize > 0 ? `${row.previewSize}x${row.previewSize}` : "--";
         fragment.querySelector('[data-col="mode"]').textContent = row.mode || "--";
@@ -455,6 +470,7 @@ function buildSettingsPanel(row) {
     settings.className = "settings-list";
 
     const lines = dedupeDetails([
+        row.weeklyChallenge ? `Weekly Challenge: ${row.weeklyChallengeId || "Yes"}` : "",
         `Leaderboard: ${row.leaderboardCategory}`,
         row.leaderboardCategoryReason ? `Leaderboard Reason: ${row.leaderboardCategoryReason}` : "",
         ...row.settingsLines.filter((line) => !isDuplicateLeaderboardLine(line)),

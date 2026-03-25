@@ -5,3 +5,6 @@ ALTER TABLE submissions ADD COLUMN leaderboard_category TEXT NOT NULL DEFAULT 'C
 ALTER TABLE submissions ADD COLUMN leaderboard_category_reason TEXT NOT NULL DEFAULT '';
 ALTER TABLE submissions ADD COLUMN vote_reroll_used INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE submissions ADD COLUMN preview_slots_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE submissions ADD COLUMN settings_seed TEXT NOT NULL DEFAULT '';
+ALTER TABLE submissions ADD COLUMN weekly_challenge INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE submissions ADD COLUMN weekly_challenge_id TEXT NOT NULL DEFAULT '';

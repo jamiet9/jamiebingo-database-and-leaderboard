@@ -35,6 +35,8 @@ export default {
           completed_slot_ids_json AS completedSlotIdsJson,
           opponent_completed_slot_ids_json AS opponentCompletedSlotIdsJson,
           settings_json AS settingsJson,
+          weekly_challenge AS weeklyChallenge,
+          weekly_challenge_id AS weeklyChallengeId,
           leaderboard_category AS leaderboardCategory,
           leaderboard_category_reason AS leaderboardCategoryReason
         FROM submissions
@@ -50,6 +52,7 @@ export default {
         playerName: row.playerName,
         cardSeed: row.cardSeed,
         worldSeed: row.worldSeed,
+        settingsSeed: row.settingsSeed,
         durationSeconds: Number(row.durationSeconds || 0),
         finishedAtEpochSeconds: Number(row.finishedAtEpochSeconds || 0),
         completed: Boolean(row.completed),
@@ -65,6 +68,8 @@ export default {
         completedSlotIds: parseJsonArray(row.completedSlotIdsJson),
         opponentCompletedSlotIds: parseJsonArray(row.opponentCompletedSlotIdsJson),
         settingsLines: parseJsonArray(row.settingsJson),
+        weeklyChallenge: Boolean(row.weeklyChallenge),
+        weeklyChallengeId: row.weeklyChallengeId || "",
         leaderboardCategory: row.leaderboardCategory || "Custom",
         leaderboardCategoryReason: row.leaderboardCategoryReason || ""
       }));
@@ -73,6 +78,17 @@ export default {
         submissions,
         seasonStartEpochSeconds: seasonStart,
         nextResetEpochSeconds: seasonStart + WEEKLY_RESET_PERIOD_SECONDS
+      }, {
+        headers: corsHeaders()
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/weekly-challenge") {
+      const baseSeed = currentSeasonStart();
+      return Response.json({
+        baseSeed,
+        challengeId: `weekly-${baseSeed}`,
+        nextResetEpochSeconds: baseSeed + WEEKLY_RESET_PERIOD_SECONDS
       }, {
         headers: corsHeaders()
       });
@@ -102,10 +118,12 @@ export default {
           completed_slot_ids_json,
           opponent_completed_slot_ids_json,
           settings_json,
+          weekly_challenge,
+          weekly_challenge_id,
           leaderboard_category,
           leaderboard_category_reason,
           submitted_at_epoch_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         body.playerName || "Unknown",
         body.cardSeed || "",
@@ -126,6 +144,8 @@ export default {
         JSON.stringify(asArray(body.completedSlotIds)),
         JSON.stringify(asArray(body.opponentCompletedSlotIds)),
         JSON.stringify(asArray(body.settingsLines)),
+        body.weeklyChallenge ? 1 : 0,
+        body.weeklyChallengeId || "",
         body.leaderboardCategory || "Custom",
         body.leaderboardCategoryReason || "",
         Number(body.submittedAtEpochSeconds || Math.floor(Date.now() / 1000))
