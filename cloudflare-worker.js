@@ -90,41 +90,7 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/weekly-challenge-publish") {
       const body = await request.json();
-      await env.DB.prepare(`
-        INSERT INTO weekly_challenge_state (
-          challenge_id,
-          base_seed,
-          next_reset_epoch_seconds,
-          settings_seed,
-          world_seed,
-          card_seed,
-          preview_size,
-          preview_slots_json,
-          settings_json,
-          updated_at_epoch_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(challenge_id) DO UPDATE SET
-          base_seed = excluded.base_seed,
-          next_reset_epoch_seconds = excluded.next_reset_epoch_seconds,
-          settings_seed = excluded.settings_seed,
-          world_seed = excluded.world_seed,
-          card_seed = excluded.card_seed,
-          preview_size = excluded.preview_size,
-          preview_slots_json = excluded.preview_slots_json,
-          settings_json = excluded.settings_json,
-          updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
-      `).bind(
-        body.challengeId || "",
-        Number(body.baseSeed || 0),
-        Number(body.nextResetEpochSeconds || 0),
-        body.settingsSeed || "",
-        body.worldSeed || "",
-        body.cardSeed || "",
-        Number(body.previewSize || 0),
-        JSON.stringify(asArray(body.previewSlots)),
-        JSON.stringify(asArray(body.settingsLines)),
-        Math.floor(Date.now() / 1000)
-      ).run();
+      await upsertWeeklyChallengeState(env, body);
 
       return Response.json({ ok: true }, {
         headers: corsHeaders()
@@ -299,4 +265,77 @@ function currentSeasonStart() {
   const elapsed = now - WEEKLY_RESET_ANCHOR_EPOCH_SECONDS;
   const cycles = Math.floor(elapsed / WEEKLY_RESET_PERIOD_SECONDS);
   return WEEKLY_RESET_ANCHOR_EPOCH_SECONDS + cycles * WEEKLY_RESET_PERIOD_SECONDS;
+}
+
+async function upsertWeeklyChallengeState(env, body) {
+  try {
+    await env.DB.prepare(`
+      INSERT INTO weekly_challenge_state (
+        challenge_id,
+        base_seed,
+        next_reset_epoch_seconds,
+        settings_seed,
+        world_seed,
+        card_seed,
+        preview_size,
+        preview_slots_json,
+        settings_json,
+        updated_at_epoch_seconds
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(challenge_id) DO UPDATE SET
+        base_seed = excluded.base_seed,
+        next_reset_epoch_seconds = excluded.next_reset_epoch_seconds,
+        settings_seed = excluded.settings_seed,
+        world_seed = excluded.world_seed,
+        card_seed = excluded.card_seed,
+        preview_size = excluded.preview_size,
+        preview_slots_json = excluded.preview_slots_json,
+        settings_json = excluded.settings_json,
+        updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
+    `).bind(
+      body.challengeId || "",
+      Number(body.baseSeed || 0),
+      Number(body.nextResetEpochSeconds || 0),
+      body.settingsSeed || "",
+      body.worldSeed || "",
+      body.cardSeed || "",
+      Number(body.previewSize || 0),
+      JSON.stringify(asArray(body.previewSlots)),
+      JSON.stringify(asArray(body.settingsLines)),
+      Math.floor(Date.now() / 1000)
+    ).run();
+  } catch {
+    await env.DB.prepare(`
+      INSERT INTO weekly_challenge_state (
+        challenge_id,
+        base_seed,
+        next_reset_epoch_seconds,
+        settings_seed,
+        world_seed,
+        card_seed,
+        preview_size,
+        preview_slots_json,
+        settings_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(challenge_id) DO UPDATE SET
+        base_seed = excluded.base_seed,
+        next_reset_epoch_seconds = excluded.next_reset_epoch_seconds,
+        settings_seed = excluded.settings_seed,
+        world_seed = excluded.world_seed,
+        card_seed = excluded.card_seed,
+        preview_size = excluded.preview_size,
+        preview_slots_json = excluded.preview_slots_json,
+        settings_json = excluded.settings_json
+    `).bind(
+      body.challengeId || "",
+      Number(body.baseSeed || 0),
+      Number(body.nextResetEpochSeconds || 0),
+      body.settingsSeed || "",
+      body.worldSeed || "",
+      body.cardSeed || "",
+      Number(body.previewSize || 0),
+      JSON.stringify(asArray(body.previewSlots)),
+      JSON.stringify(asArray(body.settingsLines))
+    ).run();
+  }
 }
