@@ -18,16 +18,20 @@
         </div>
         <div class="hero-stats">
             <div class="stat-card">
-                <span class="stat-label">Valid Runs</span>
-                <strong id="valid-count">0</strong>
+                <span class="stat-label">Default Runs</span>
+                <strong id="default-count">0</strong>
             </div>
             <div class="stat-card">
-                <span class="stat-label">Invalid Runs</span>
-                <strong id="invalid-count">0</strong>
+                <span class="stat-label">Custom Runs</span>
+                <strong id="custom-count">0</strong>
             </div>
             <div class="stat-card">
-                <span class="stat-label">Best Time</span>
-                <strong id="best-time">--:--</strong>
+                <span class="stat-label">Best Default Time</span>
+                <strong id="best-default-time">--:--</strong>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Best Custom Time</span>
+                <strong id="best-custom-time">--:--</strong>
             </div>
         </div>
     </header>
@@ -39,17 +43,9 @@
                 <input id="search-player" type="search" placeholder="Player name">
             </label>
             <label class="control">
-                <span>Show</span>
-                <select id="validity-filter">
-                    <option value="all">All submissions</option>
-                    <option value="valid">Valid only</option>
-                    <option value="invalid">Invalid only</option>
-                </select>
-            </label>
-            <label class="control">
                 <span>Sort By</span>
                 <select id="sort-order">
-                    <option value="fastest">Fastest valid</option>
+                    <option value="fastest">Fastest</option>
                     <option value="recent">Most recent</option>
                 </select>
             </label>
@@ -86,18 +82,16 @@
                     <th>#</th>
                     <th>Player</th>
                     <th>Time</th>
-                    <th>Result</th>
                     <th>Leaderboard</th>
                     <th>Board</th>
                     <th>Finished</th>
                     <th>Card Seed</th>
                     <th>World Seed</th>
-                    <th>Reason</th>
                 </tr>
                 </thead>
                 <tbody id="leaderboard-body">
                 <tr>
-                    <td colspan="10" class="empty-state">Loading submissions...</td>
+                    <td colspan="8" class="empty-state">Loading submissions...</td>
                 </tr>
                 </tbody>
             </table>
@@ -110,13 +104,11 @@
         <td data-col="rank"></td>
         <td data-col="player"></td>
         <td data-col="time"></td>
-        <td data-col="result"></td>
         <td data-col="leaderboard"></td>
         <td data-col="board"></td>
         <td data-col="finished"></td>
         <td data-col="cardSeed"></td>
         <td data-col="worldSeed"></td>
-        <td data-col="reason"></td>
     </tr>
 </template>
 
