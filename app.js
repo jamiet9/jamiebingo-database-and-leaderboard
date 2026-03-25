@@ -1,4 +1,4 @@
-const DEFAULT_SOURCE = "./data/submissions.json";
+const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
 
 const state = {
     rows: [],
