@@ -1,4 +1,5 @@
 const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
+const DEFAULT_WEEKLY_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/weekly-challenge";
 const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
 const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774462867;
 const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
@@ -101,10 +102,12 @@ const state = {
     rows: [],
     filtered: [],
     source: DEFAULT_SOURCE,
+    weeklySource: DEFAULT_WEEKLY_SOURCE,
     openRowId: null,
     nextResetEpochSeconds: fallbackNextResetEpochSeconds(),
     itemTextureMap: {},
-    copyFeedbackTimer: null
+    copyFeedbackTimer: null,
+    weekly: null
 };
 
 const elements = {
@@ -121,7 +124,12 @@ const elements = {
     customCount: document.getElementById("custom-count"),
     bestDefaultTime: document.getElementById("best-default-time"),
     bestCustomTime: document.getElementById("best-custom-time"),
-    nextResetTime: document.getElementById("next-reset-time")
+    bestWeeklyTime: document.getElementById("best-weekly-time"),
+    nextResetTime: document.getElementById("next-reset-time"),
+    weeklyMeta: document.getElementById("weekly-meta"),
+    weeklyCardPreview: document.getElementById("weekly-card-preview"),
+    weeklySeedGrid: document.getElementById("weekly-seed-grid"),
+    weeklySettingsList: document.getElementById("weekly-settings-list")
 };
 
 let resetTimerHandle = null;
@@ -132,6 +140,7 @@ async function bootstrap() {
     const params = new URLSearchParams(window.location.search);
     const querySource = params.get("source");
     state.source = querySource || DEFAULT_SOURCE;
+    state.weeklySource = deriveWeeklySource(state.source);
     elements.sourceLabel.textContent = `Source: ${state.source}`;
     const queryCategory = (params.get("category") || "").toLowerCase();
     if (["default", "custom", "weekly"].includes(queryCategory)) {
@@ -140,7 +149,16 @@ async function bootstrap() {
     bindEvents();
     startResetTimer();
     await loadItemTextureMap();
+    await loadWeeklyChallenge();
     await loadSubmissions();
+}
+
+function deriveWeeklySource(submissionsSource) {
+    const value = String(submissionsSource || "").trim();
+    if (value.endsWith("/submissions")) {
+        return value.slice(0, -"/submissions".length) + "/weekly-challenge";
+    }
+    return DEFAULT_WEEKLY_SOURCE;
 }
 
 async function loadItemTextureMap() {
@@ -179,6 +197,101 @@ async function loadSubmissions() {
         renderMessage(`Could not load submissions: ${error.message}`);
         updateStats();
     }
+}
+
+async function loadWeeklyChallenge() {
+    if (!elements.weeklyMeta || !elements.weeklyCardPreview || !elements.weeklySeedGrid || !elements.weeklySettingsList) {
+        return;
+    }
+    elements.weeklyMeta.textContent = "Loading weekly challenge...";
+    elements.weeklyCardPreview.textContent = "Loading weekly card...";
+    elements.weeklySeedGrid.innerHTML = "";
+    elements.weeklySettingsList.innerHTML = "";
+    try {
+        const response = await fetch(state.weeklySource, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const raw = await response.json();
+        state.weekly = normalizeWeeklyChallenge(raw);
+        renderWeeklyChallenge();
+    } catch (error) {
+        state.weekly = null;
+        elements.weeklyMeta.textContent = `Could not load weekly challenge: ${error.message}`;
+        elements.weeklyCardPreview.className = "detail-empty";
+        elements.weeklyCardPreview.textContent = "Weekly challenge preview is unavailable right now.";
+        elements.weeklySeedGrid.innerHTML = "";
+        elements.weeklySettingsList.innerHTML = "";
+    }
+}
+
+function normalizeWeeklyChallenge(raw) {
+    const weekly = {
+        baseSeed: Number(raw?.baseSeed ?? 0),
+        challengeId: String(raw?.challengeId ?? ""),
+        nextResetEpochSeconds: Number(raw?.nextResetEpochSeconds ?? 0),
+        settingsSeed: String(raw?.settingsSeed ?? ""),
+        worldSeed: String(raw?.worldSeed ?? ""),
+        cardSeed: String(raw?.cardSeed ?? ""),
+        settingsLines: Array.isArray(raw?.settingsLines) ? raw.settingsLines.map((line) => String(line ?? "")) : [],
+        previewSize: Number(raw?.previewSize ?? raw?.card?.size ?? 0),
+        previewSlots: Array.isArray(raw?.previewSlots)
+            ? raw.previewSlots.map(normalizePreviewSlot)
+            : Array.isArray(raw?.card?.slots)
+                ? raw.card.slots.map(normalizePreviewSlot)
+                : []
+    };
+    return weekly;
+}
+
+function renderWeeklyChallenge() {
+    const weekly = state.weekly;
+    if (!weekly) return;
+    elements.weeklyMeta.textContent = `Challenge ${weekly.challengeId || "--"} | resets ${formatResetAbsolute(weekly.nextResetEpochSeconds)}`;
+    elements.weeklyCardPreview.className = "";
+    elements.weeklyCardPreview.innerHTML = "";
+    elements.weeklyCardPreview.appendChild(buildWeeklyCardPreview(weekly));
+
+    elements.weeklySeedGrid.innerHTML = "";
+    elements.weeklySeedGrid.append(
+        buildSeedItem("Weekly Base Seed", weekly.baseSeed > 0 ? String(weekly.baseSeed) : "(none)"),
+        buildSeedItem("Settings Seed", weekly.settingsSeed || "(none)"),
+        buildSeedItem("Bingo World Seed", weekly.worldSeed || "(none)"),
+        buildSeedItem("Card Seed", weekly.cardSeed || "(none)")
+    );
+
+    elements.weeklySettingsList.innerHTML = "";
+    const lines = dedupeDetails(weekly.settingsLines.filter(Boolean));
+    if (!lines.length) {
+        const empty = document.createElement("div");
+        empty.className = "detail-empty";
+        empty.textContent = "Weekly settings are unavailable.";
+        elements.weeklySettingsList.appendChild(empty);
+    } else {
+        lines.forEach((line) => {
+            const split = splitSettingLine(line);
+            const rowEl = document.createElement("div");
+            rowEl.className = "setting-line";
+            rowEl.innerHTML = `<span class="setting-key">${escapeHtml(split.key)}</span><span class="setting-value">${escapeHtml(split.value)}</span>`;
+            elements.weeklySettingsList.appendChild(rowEl);
+        });
+    }
+}
+
+function buildWeeklyCardPreview(weekly) {
+    if (!weekly.previewSize || !weekly.previewSlots.length) {
+        const empty = document.createElement("div");
+        empty.className = "detail-empty";
+        empty.textContent = "This weekly challenge does not include preview data yet.";
+        return empty;
+    }
+    return buildCardPreview({
+        previewSize: weekly.previewSize,
+        previewSlots: weekly.previewSlots,
+        previewSlotIds: weekly.previewSlots.map((slot) => slot.id || ""),
+        completedSlotIds: [],
+        opponentCompletedSlotIds: [],
+        teamColorId: 10,
+        settingsLines: weekly.settingsLines
+    });
 }
 
 function normalizeSubmissions(raw) {
@@ -544,10 +657,12 @@ function isMaskedPreviewSlot(row) {
 function updateStats() {
     const defaultRows = state.rows.filter((row) => row.leaderboardCategory.toLowerCase() === "default");
     const customRows = state.rows.filter((row) => row.leaderboardCategory.toLowerCase() === "custom");
+    const weeklyRows = state.rows.filter((row) => row.weeklyChallenge);
     elements.defaultCount.textContent = String(defaultRows.length);
     elements.customCount.textContent = String(customRows.length);
     elements.bestDefaultTime.textContent = bestTimeFor(defaultRows);
     elements.bestCustomTime.textContent = bestTimeFor(customRows);
+    elements.bestWeeklyTime.textContent = bestTimeFor(weeklyRows);
     elements.resultsMeta.textContent = `${state.filtered.length} run${state.filtered.length === 1 ? "" : "s"}`;
 }
 
@@ -581,6 +696,11 @@ function formatResetCountdown(totalSeconds) {
         return `${days}d ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`;
     }
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatResetAbsolute(epochSeconds) {
+    if (!epochSeconds) return "--";
+    return new Date(epochSeconds * 1000).toLocaleString();
 }
 
 function fallbackNextResetEpochSeconds() {

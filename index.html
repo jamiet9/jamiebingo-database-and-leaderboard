@@ -34,6 +34,10 @@
                 <strong id="best-custom-time">--:--</strong>
             </div>
             <div class="stat-card">
+                <span class="stat-label">Best Weekly Time</span>
+                <strong id="best-weekly-time">--:--</strong>
+            </div>
+            <div class="stat-card">
                 <span class="stat-label">Next Reset In</span>
                 <strong id="next-reset-time">--:--:--</strong>
             </div>
@@ -99,6 +103,26 @@
         <div class="toolbar-meta">
             <span id="source-label">Source: ./data/submissions.json</span>
             <button id="refresh-button" type="button">Refresh</button>
+        </div>
+    </section>
+
+    <section class="weekly-panel">
+        <div class="table-header">
+            <h2>Current Weekly Challenge</h2>
+            <p id="weekly-meta">Loading weekly challenge...</p>
+        </div>
+        <div class="weekly-layout">
+            <section class="detail-preview">
+                <div class="detail-title">Weekly Card</div>
+                <div id="weekly-card-preview" class="detail-empty">Loading weekly card...</div>
+            </section>
+            <section class="detail-meta">
+                <div class="detail-title">Weekly Seeds And Settings</div>
+                <div class="detail-sections">
+                    <div id="weekly-seed-grid" class="seed-grid"></div>
+                    <div id="weekly-settings-list" class="settings-list"></div>
+                </div>
+            </section>
         </div>
     </section>
 
