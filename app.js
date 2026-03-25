@@ -590,7 +590,7 @@ function createSlotTexture(slot) {
     img.className = "preview-item-icon";
     img.alt = slot.name || slot.id;
     img.loading = "lazy";
-    const path = slot.id.replace("minecraft:", "");
+    const path = normalizeItemTexturePath(slot);
     img.src = `${ITEM_TEXTURE_BASE}${path}.png`;
     img.onerror = () => {
         if (!img.dataset.triedBlockTexture) {
@@ -604,6 +604,21 @@ function createSlotTexture(slot) {
         img.replaceWith(fallback);
     };
     return img;
+}
+
+function normalizeItemTexturePath(slot) {
+    const rawId = String(slot?.id || "").trim();
+    if (rawId.startsWith("minecraft:")) {
+        return rawId.slice("minecraft:".length);
+    }
+    if (rawId.includes(":")) {
+        return rawId.split(":").slice(1).join(":");
+    }
+    const rawName = String(slot?.name || rawId).trim().toLowerCase();
+    return rawName
+        .replaceAll("'", "")
+        .replaceAll("&", "and")
+        .replaceAll(" ", "_");
 }
 
 function createQuestIcon(slot) {
