@@ -360,133 +360,82 @@ tbody tr.detail-row:hover {
 
 .card-preview {
     display: grid;
-    gap: 6px;
-    justify-content: start;
-}
-
-.preview-row {
-    display: grid;
-    gap: 6px;
+    gap: 8px;
+    width: min(100%, 320px);
 }
 
 .preview-slot {
     position: relative;
-    width: 52px;
-    height: 52px;
+    aspect-ratio: 1 / 1;
+    min-width: 0;
     border-radius: 12px;
     border: 1px solid rgba(135, 173, 212, 0.24);
     background: linear-gradient(180deg, rgba(42, 61, 87, 0.95), rgba(22, 34, 52, 0.95));
     overflow: hidden;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
 }
 
 .preview-slot.is-completed {
-    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
+    border-color: color-mix(in srgb, var(--slot-team-color, #6dd3ff) 70%, white 30%);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--slot-team-color, #6dd3ff) 50%, transparent 50%);
+    background:
+        linear-gradient(180deg, rgba(42, 61, 87, 0.82), rgba(22, 34, 52, 0.9)),
+        linear-gradient(180deg, color-mix(in srgb, var(--slot-team-color, #6dd3ff) 26%, transparent 74%), color-mix(in srgb, var(--slot-team-color, #6dd3ff) 16%, transparent 84%));
 }
 
 .preview-slot.is-opponent {
     outline: 2px solid rgba(255, 255, 255, 0.18);
 }
 
-.preview-fill {
-    position: absolute;
-    inset: 0;
-    opacity: 0.2;
-}
-
 .preview-content {
     position: absolute;
-    inset: 6px;
+    inset: 18px 6px 20px;
     display: flex;
     align-items: center;
     justify-content: center;
     text-align: center;
-    font-size: 9px;
-    line-height: 1.15;
+    font-size: 10px;
+    line-height: 1.2;
     color: var(--text);
     word-break: break-word;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
 }
 
-.preview-item-icon {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    image-rendering: pixelated;
-}
-
-.preview-item-fallback,
-.preview-quest-badge {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
-    border-radius: 10px;
-    text-align: center;
-    font-size: 20px;
-    font-weight: 700;
-}
-
-.preview-item-fallback {
-    color: #eef5ff;
-    background: rgba(52, 76, 108, 0.78);
-}
-
-.preview-quest-badge {
-    color: #fef7d8;
-    background: linear-gradient(180deg, rgba(178, 128, 33, 0.95), rgba(102, 66, 12, 0.95));
-    box-shadow: inset 0 0 0 1px rgba(255, 232, 159, 0.32);
-}
-
-.preview-quest-wrap {
-    position: relative;
-    width: 100%;
-    height: 100%;
-}
-
-.preview-quest-main,
-.preview-quest-corner,
-.preview-quest-region {
+.preview-slot-number {
     position: absolute;
-    image-rendering: pixelated;
-}
-
-.preview-quest-main,
-.preview-quest-region.preview-quest-main {
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-}
-
-.preview-quest-corner,
-.preview-quest-region.preview-quest-corner {
-    right: -2px;
-    bottom: -2px;
-    width: 42%;
-    height: 42%;
-    object-fit: contain;
-}
-
-.preview-quest-region {
-    background-repeat: no-repeat;
-    background-position: 0 0;
-}
-
-.preview-quest-number {
-    position: absolute;
-    right: -2px;
-    top: -2px;
-    min-width: 16px;
-    height: 16px;
-    padding: 0 3px;
-    border-radius: 999px;
-    background: rgba(7, 14, 23, 0.88);
-    color: #fff2b2;
+    left: 6px;
+    top: 5px;
+    color: rgba(214, 228, 246, 0.64);
     font-size: 10px;
-    line-height: 16px;
     font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.preview-slot-badge {
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    bottom: 5px;
+    min-height: 14px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--slot-team-color, #6dd3ff) 26%, rgba(11, 18, 28, 0.94));
+    color: #f3f8ff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
     text-align: center;
-    box-shadow: 0 0 0 1px rgba(255, 236, 173, 0.18);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.preview-slot-badge.is-opponent {
+    background: rgba(124, 141, 165, 0.24);
+    color: #d9e4f2;
 }
 
 .preview-mask {
@@ -580,8 +529,11 @@ tbody tr.detail-row:hover {
         grid-template-columns: 1fr;
     }
 
-    .preview-slot {
-        width: 46px;
-        height: 46px;
+    .card-preview {
+        width: 100%;
+    }
+
+    .preview-content {
+        font-size: 9px;
     }
 }

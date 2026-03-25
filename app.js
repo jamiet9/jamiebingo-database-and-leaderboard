@@ -366,45 +366,52 @@ function buildCardPreview(row) {
     const opponent = new Set(row.opponentCompletedSlotIds);
     const preview = document.createElement("div");
     preview.className = "card-preview";
+    preview.style.gridTemplateColumns = `repeat(${row.previewSize}, minmax(0, 1fr))`;
 
     const color = TEAM_COLORS[row.teamColorId] || TEAM_COLORS[10];
-    for (let y = 0; y < row.previewSize; y++) {
-        const rowEl = document.createElement("div");
-        rowEl.className = "preview-row";
-        rowEl.style.gridTemplateColumns = `repeat(${row.previewSize}, 1fr)`;
-        for (let x = 0; x < row.previewSize; x++) {
-            const idx = y * row.previewSize + x;
-            const slotData = row.previewSlots[idx] || normalizePreviewSlot({ id: row.previewSlotIds[idx] || "" });
-            const slotId = slotData.id || "";
-            const slot = document.createElement("div");
-            slot.className = "preview-slot";
-            if (completed.has(slotId)) {
-                slot.classList.add("is-completed");
-                const fill = document.createElement("div");
-                fill.className = "preview-fill";
-                fill.style.background = color;
-                slot.appendChild(fill);
-            } else if (opponent.has(slotId)) {
-                slot.classList.add("is-opponent");
-            }
-            const content = document.createElement("div");
-            content.className = "preview-content";
-            if (slotId && !isMaskedPreviewSlot(row)) {
-                const texture = createSlotTexture(slotData);
-                if (texture) {
-                    content.appendChild(texture);
-                } else {
-                    content.textContent = slotData.name || slotId;
-                }
-                content.title = buildSlotTooltip(slotData);
-            } else {
-                content.classList.add("preview-mask");
-                content.textContent = slotId ? "?" : "";
-            }
-            slot.appendChild(content);
-            rowEl.appendChild(slot);
+    const masked = isMaskedPreviewSlot(row);
+    for (let idx = 0; idx < row.previewSize * row.previewSize; idx++) {
+        const slotData = row.previewSlots[idx] || normalizePreviewSlot({ id: row.previewSlotIds[idx] || "" });
+        const slotId = slotData.id || "";
+        const slot = document.createElement("div");
+        slot.className = "preview-slot";
+        slot.style.setProperty("--slot-team-color", color);
+
+        if (completed.has(slotId)) {
+            slot.classList.add("is-completed");
+        } else if (opponent.has(slotId)) {
+            slot.classList.add("is-opponent");
         }
-        preview.appendChild(rowEl);
+
+        const number = document.createElement("div");
+        number.className = "preview-slot-number";
+        number.textContent = String(idx + 1);
+        slot.appendChild(number);
+
+        const content = document.createElement("div");
+        content.className = "preview-content";
+        content.title = slotId ? buildSlotTooltip(slotData) : "";
+        if (slotId && !masked) {
+            content.textContent = slotData.name || slotId;
+        } else if (slotId) {
+            content.classList.add("preview-mask");
+            content.textContent = "?";
+        }
+        slot.appendChild(content);
+
+        if (completed.has(slotId)) {
+            const badge = document.createElement("div");
+            badge.className = "preview-slot-badge";
+            badge.textContent = "Done";
+            slot.appendChild(badge);
+        } else if (opponent.has(slotId)) {
+            const badge = document.createElement("div");
+            badge.className = "preview-slot-badge is-opponent";
+            badge.textContent = "Opp";
+            slot.appendChild(badge);
+        }
+
+        preview.appendChild(slot);
     }
 
     return preview;
