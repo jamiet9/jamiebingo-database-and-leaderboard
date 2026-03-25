@@ -5,6 +5,9 @@ const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 const ITEM_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/item/";
 const BLOCK_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/block/";
 const MINECRAFT_ASSET_BASE = "https://mcasset.cloud/1.21.8/assets/";
+const SPECIAL_ITEM_TEXTURES = {
+    "minecraft:decorated_pot": `${MINECRAFT_ASSET_BASE}minecraft/textures/entity/decorated_pot/decorated_pot_base.png`
+};
 const LOCAL_ENTITY_TEXTURES = {
     "minecraft:allay": "./assets/entity/allay/allay.png",
     "minecraft:armadillo": "./assets/entity/armadillo.png",
@@ -100,6 +103,7 @@ const state = {
     source: DEFAULT_SOURCE,
     openRowId: null,
     nextResetEpochSeconds: fallbackNextResetEpochSeconds(),
+    itemTextureMap: {},
     copyFeedbackTimer: null
 };
 
@@ -130,7 +134,19 @@ async function bootstrap() {
     elements.sourceLabel.textContent = `Source: ${state.source}`;
     bindEvents();
     startResetTimer();
+    await loadItemTextureMap();
     await loadSubmissions();
+}
+
+async function loadItemTextureMap() {
+    try {
+        const response = await fetch("./assets/item_texture_map.json", { cache: "force-cache" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        state.itemTextureMap = data && typeof data === "object" ? data : {};
+    } catch {
+        state.itemTextureMap = {};
+    }
 }
 
 function bindEvents() {
@@ -590,9 +606,23 @@ function createSlotTexture(slot) {
     img.className = "preview-item-icon";
     img.alt = slot.name || slot.id;
     img.loading = "lazy";
+    const mappedTexture = resolveMappedItemTexture(slot);
     const path = normalizeItemTexturePath(slot);
-    img.src = `${ITEM_TEXTURE_BASE}${path}.png`;
+    const specialTexture = SPECIAL_ITEM_TEXTURES[String(slot.id || "").trim()];
+    img.src = specialTexture || mappedTexture || `${ITEM_TEXTURE_BASE}${path}.png`;
     img.onerror = () => {
+        if (specialTexture) {
+            if (!img.dataset.triedMappedTexture && mappedTexture) {
+                img.dataset.triedMappedTexture = "true";
+                img.src = mappedTexture;
+                return;
+            }
+        }
+        if (!img.dataset.triedMappedTexture && mappedTexture) {
+            img.dataset.triedMappedTexture = "true";
+            img.src = mappedTexture;
+            return;
+        }
         if (!img.dataset.triedBlockTexture) {
             img.dataset.triedBlockTexture = "true";
             img.src = `${BLOCK_TEXTURE_BASE}${path}.png`;
@@ -619,6 +649,12 @@ function normalizeItemTexturePath(slot) {
         .replaceAll("'", "")
         .replaceAll("&", "and")
         .replaceAll(" ", "_");
+}
+
+function resolveMappedItemTexture(slot) {
+    const id = String(slot?.id || "").trim();
+    const textureId = state.itemTextureMap[id];
+    return resolveTextureUrl(textureId || "");
 }
 
 function createQuestIcon(slot) {
