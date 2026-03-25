@@ -460,6 +460,28 @@ tbody tr.detail-row:hover {
     gap: 14px;
 }
 
+.weekly-settings-dropdown {
+    border: 1px solid rgba(126, 167, 209, 0.18);
+    border-radius: 16px;
+    background: rgba(14, 22, 33, 0.48);
+    padding: 12px 14px;
+}
+
+.weekly-settings-dropdown summary {
+    cursor: pointer;
+    color: var(--text);
+    font-weight: 700;
+    list-style: none;
+}
+
+.weekly-settings-dropdown summary::-webkit-details-marker {
+    display: none;
+}
+
+.weekly-settings-dropdown[open] summary {
+    margin-bottom: 12px;
+}
+
 .seed-grid {
     display: grid;
     gap: 10px;
