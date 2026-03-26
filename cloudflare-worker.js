@@ -1,4 +1,4 @@
-const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
+﻿const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
 const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774537841;
 const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 
@@ -356,6 +356,8 @@ async function upsertWeeklyChallengeState(env, body) {
     ).run();
   }
 }
+
+
 
 
 
