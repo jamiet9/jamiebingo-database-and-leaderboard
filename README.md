@@ -52,3 +52,17 @@ Each submission should contain:
 3. Enable GitHub Pages for the repo root.
 4. Point the mod's `leaderboardUrl` to the published site.
 5. Add a real backend and point the mod's `submitUrl` to it.
+
+## Automatic weekly ownership
+
+The weekly challenge can now be owned by the website backend rather than the live mod runtime.
+
+Expected setup:
+
+1. Set Cloudflare Worker secret `API_KEY`.
+2. In the mod repo, add GitHub Actions secrets:
+   - `JAMIEBINGO_WEEKLY_PUBLISH_URL`
+   - `JAMIEBINGO_WEEKLY_API_KEY`
+3. The scheduled workflow `.github/workflows/publish-weekly-challenge.yml` will generate the current weekly payload and publish it to `/weekly-challenge-publish` every Thursday at 15:15 UTC.
+
+The worker continues to serve the stored weekly row on `GET /weekly-challenge`.

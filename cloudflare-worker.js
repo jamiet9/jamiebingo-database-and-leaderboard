@@ -1,5 +1,5 @@
-﻿const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
-const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774492240;
+const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
+const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774537841;
 const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 
 export default {
@@ -89,6 +89,9 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/weekly-challenge-publish") {
+      const authError = requireApiKey(request, env);
+      if (authError) return authError;
+
       const body = await request.json();
       await upsertWeeklyChallengeState(env, body);
 
@@ -98,6 +101,9 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/submit") {
+      const authError = requireApiKey(request, env);
+      if (authError) return authError;
+
       const body = await request.json();
 
       await env.DB.prepare(`
@@ -242,6 +248,17 @@ function corsHeaders() {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, X-API-Key"
   };
+}
+
+function requireApiKey(request, env) {
+  const expected = String(env.API_KEY || "").trim();
+  if (!expected) return null;
+  const provided = String(request.headers.get("X-API-Key") || "").trim();
+  if (provided && provided === expected) return null;
+  return Response.json({ ok: false, error: "Unauthorized" }, {
+    status: 401,
+    headers: corsHeaders()
+  });
 }
 
 function parseJsonArray(value) {
