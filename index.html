@@ -71,29 +71,35 @@
         <p class="rules-note">The weekly leaderboard resets every 7 days. Older submissions are hidden automatically when the next season begins.</p>
     </section>
 
-    <section class="weekly-panel">
-        <div class="table-header">
-            <h2>Current Weekly Challenge</h2>
-            <p id="weekly-meta">Loading weekly challenge...</p>
+    <details class="weekly-panel weekly-panel-collapsible">
+        <summary class="weekly-panel-summary">
+            <span>Current Weekly Challenge</span>
+            <span class="weekly-panel-summary-hint">Open Weekly Challenge</span>
+        </summary>
+        <div class="weekly-panel-body">
+            <div class="table-header">
+                <h2>Current Weekly Challenge</h2>
+                <p id="weekly-meta">Loading weekly challenge...</p>
+            </div>
+            <div class="weekly-layout">
+                <section class="detail-preview">
+                    <div class="detail-title">Weekly Card</div>
+                    <div id="weekly-card-preview" class="detail-empty">Loading weekly card...</div>
+                    <button id="weekly-card-fullscreen-button" type="button" class="weekly-card-button">Fullscreen Card Preview</button>
+                </section>
+                <section class="detail-meta">
+                    <div class="detail-title">Weekly Seeds And Settings</div>
+                    <div class="detail-sections">
+                        <div id="weekly-seed-grid" class="seed-grid"></div>
+                        <details class="weekly-settings-dropdown" open>
+                            <summary>Show Weekly Settings</summary>
+                            <div id="weekly-settings-list" class="settings-list"></div>
+                        </details>
+                    </div>
+                </section>
+            </div>
         </div>
-        <div class="weekly-layout">
-            <section class="detail-preview">
-                <div class="detail-title">Weekly Card</div>
-                <div id="weekly-card-preview" class="detail-empty">Loading weekly card...</div>
-                <button id="weekly-card-fullscreen-button" type="button" class="weekly-card-button">Fullscreen Card Preview</button>
-            </section>
-            <section class="detail-meta">
-                <div class="detail-title">Weekly Seeds And Settings</div>
-                <div class="detail-sections">
-                    <div id="weekly-seed-grid" class="seed-grid"></div>
-                    <details class="weekly-settings-dropdown" open>
-                        <summary>Show Weekly Settings</summary>
-                        <div id="weekly-settings-list" class="settings-list"></div>
-                    </details>
-                </div>
-            </section>
-        </div>
-    </section>
+    </details>
 
     <section class="toolbar-panel">
         <div class="toolbar-grid">

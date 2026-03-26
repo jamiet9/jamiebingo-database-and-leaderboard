@@ -226,6 +226,40 @@ button {
     margin-bottom: 18px;
 }
 
+.weekly-panel-collapsible {
+    padding: 0;
+    overflow: hidden;
+}
+
+.weekly-panel-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 22px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.weekly-panel-summary::-webkit-details-marker {
+    display: none;
+}
+
+.weekly-panel-summary-hint {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.weekly-panel-body {
+    padding: 0 20px 20px;
+    border-top: 1px solid rgba(126, 167, 209, 0.14);
+}
+
 .weekly-layout {
     display: grid;
     grid-template-columns: minmax(260px, 340px) 1fr;
