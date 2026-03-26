@@ -1,7 +1,7 @@
-const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
+﻿const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
 const DEFAULT_WEEKLY_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/weekly-challenge";
 const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
-const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774480736;
+const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774656000;
 const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 const ITEM_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/item/";
 const BLOCK_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/block/";
@@ -212,12 +212,14 @@ async function loadSubmissions() {
         const response = await fetch(state.source, { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const raw = await response.json();
-        state.nextResetEpochSeconds = Number(raw?.nextResetEpochSeconds ?? fallbackNextResetEpochSeconds());
+        state.nextResetEpochSeconds = Number(raw?.nextResetEpochSeconds ?? state.nextResetEpochSeconds ?? fallbackNextResetEpochSeconds());
         state.rows = normalizeSubmissions(raw).filter((row) => row.isValid);
         populateSizeFilter(state.rows);
         applyFilters();
     } catch (error) {
-        state.nextResetEpochSeconds = fallbackNextResetEpochSeconds();
+        if (!Number.isFinite(state.nextResetEpochSeconds) || state.nextResetEpochSeconds <= 0) {
+            state.nextResetEpochSeconds = fallbackNextResetEpochSeconds();
+        }
         state.rows = [];
         state.filtered = [];
         renderMessage(`Could not load submissions: ${error.message}`);
@@ -238,6 +240,9 @@ async function loadWeeklyChallenge() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const raw = await response.json();
         state.weekly = normalizeWeeklyChallenge(raw);
+        if (Number.isFinite(state.weekly?.nextResetEpochSeconds) && state.weekly.nextResetEpochSeconds > 0) {
+            state.nextResetEpochSeconds = state.weekly.nextResetEpochSeconds;
+        }
         renderWeeklyChallenge();
     } catch (error) {
         state.weekly = null;
@@ -1027,3 +1032,4 @@ function escapeHtml(value) {
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;");
 }
+
