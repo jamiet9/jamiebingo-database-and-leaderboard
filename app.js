@@ -1,4 +1,4 @@
-﻿const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
+const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
 const DEFAULT_WEEKLY_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/weekly-challenge";
 const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
 const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774492240;
@@ -558,7 +558,15 @@ function buildCardPreview(row, fullscreen = false) {
         content.className = "preview-content";
         content.title = slotId ? buildSlotTooltip(slotData) : "";
         if (slotId && !masked) {
-            content.textContent = slotData.name || slotId;
+            const texture = createSlotTexture(slotData);
+            if (texture) {
+                content.classList.add("has-visual");
+                content.appendChild(texture);
+            }
+            const label = document.createElement("div");
+            label.className = "preview-label";
+            label.textContent = slotData.name || slotId;
+            content.appendChild(label);
         } else if (slotId) {
             content.classList.add("preview-mask");
             content.textContent = "?";
@@ -815,35 +823,114 @@ function createSlotTexture(slot) {
     const img = document.createElement("img");
     img.className = "preview-item-icon";
     img.alt = slot.name || slot.id;
-    img.loading = "lazy";
-    const mappedTexture = resolveMappedItemTexture(slot);
-    const path = normalizeItemTexturePath(slot);
-    const specialTexture = SPECIAL_ITEM_TEXTURES[String(slot.id || "").trim()];
-    img.src = specialTexture || mappedTexture || `${ITEM_TEXTURE_BASE}${path}.png`;
-    img.onerror = () => {
-        if (specialTexture) {
-            if (!img.dataset.triedMappedTexture && mappedTexture) {
-                img.dataset.triedMappedTexture = "true";
-                img.src = mappedTexture;
-                return;
-            }
-        }
-        if (!img.dataset.triedMappedTexture && mappedTexture) {
-            img.dataset.triedMappedTexture = "true";
-            img.src = mappedTexture;
-            return;
-        }
-        if (!img.dataset.triedBlockTexture) {
-            img.dataset.triedBlockTexture = "true";
-            img.src = `${BLOCK_TEXTURE_BASE}${path}.png`;
-            return;
-        }
-        const fallback = document.createElement("div");
-        fallback.className = "preview-item-fallback";
-        fallback.textContent = (slot.name || slot.id).trim().charAt(0).toUpperCase() || "?";
-        img.replaceWith(fallback);
-    };
+    attachItemIconFallback(img, slot);
     return img;
+}
+
+function buildItemIconCandidates(slot, explicitItemId = "") {
+    const itemId = String(explicitItemId || slot?.id || "").trim();
+    if (!itemId) return [];
+
+    const path = normalizeItemTexturePath({ id: itemId, name: slot?.name || itemId });
+    const displayName = String(slot?.name || itemId)
+        .trim()
+        .replace(/^minecraft:/, "");
+    const generatedName = path
+        .split("_")
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+    const specialTexture = SPECIAL_ITEM_TEXTURES[itemId] || "";
+    const mappedTexture = resolveMappedItemTexture({ id: itemId });
+    const candidates = [
+        specialTexture,
+        mappedTexture,
+        `${ITEM_TEXTURE_BASE}${path}.png`,
+        `${BLOCK_TEXTURE_BASE}${path}.png`,
+        `https://mcasset.cloud/1.21.7/assets/minecraft/textures/item/${path}.png`,
+        `https://mcasset.cloud/1.21.7/assets/minecraft/textures/block/${path}.png`,
+        `https://minecraft.wiki/wiki/Special:FilePath/${encodeURIComponent(`Invicon ${displayName}.png`)}`,
+        `https://minecraft.wiki/wiki/Special:FilePath/${encodeURIComponent(`Invicon ${generatedName}.png`)}`,
+        `https://raw.githubusercontent.com/PrismarineJS/minecraft-assets/master/data/pc/1.21/assets/minecraft/textures/item/${path}.png`,
+        `https://raw.githubusercontent.com/PrismarineJS/minecraft-assets/master/data/pc/1.21/assets/minecraft/textures/block/${path}.png`,
+        `https://raw.githubusercontent.com/PrismarineJS/minecraft-assets/master/data/pc/latest/assets/minecraft/textures/item/${path}.png`,
+        `https://raw.githubusercontent.com/PrismarineJS/minecraft-assets/master/data/pc/latest/assets/minecraft/textures/block/${path}.png`
+    ];
+
+    return [...new Set(candidates.filter(Boolean))];
+}
+
+function attachItemIconFallback(img, slot, explicitItemId = "") {
+    const itemId = String(explicitItemId || slot?.id || "").trim();
+    const candidates = buildItemIconCandidates(slot, explicitItemId);
+    if (!itemId || !candidates.length) {
+        img.replaceWith(createItemFallback(slot));
+        return;
+    }
+
+    let idx = 0;
+    let retryTimer = null;
+    const cacheKey = `icon_cache_${itemId}`;
+
+    try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            candidates.unshift(cached);
+        }
+    } catch {
+        // Ignore localStorage failures.
+    }
+
+    const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
+    img.referrerPolicy = "no-referrer";
+    img.decoding = "async";
+    img.loading = "lazy";
+
+    const tryIndex = () => {
+        if (retryTimer) {
+            window.clearTimeout(retryTimer);
+            retryTimer = null;
+        }
+        if (idx >= uniqueCandidates.length) {
+            img.replaceWith(createItemFallback(slot));
+            return;
+        }
+        img.src = uniqueCandidates[idx];
+        retryTimer = window.setTimeout(() => {
+            idx += 1;
+            tryIndex();
+        }, 2200);
+    };
+
+    img.onload = () => {
+        if (retryTimer) {
+            window.clearTimeout(retryTimer);
+            retryTimer = null;
+        }
+        try {
+            localStorage.setItem(cacheKey, img.src);
+        } catch {
+            // Ignore localStorage failures.
+        }
+    };
+
+    img.onerror = () => {
+        if (retryTimer) {
+            window.clearTimeout(retryTimer);
+            retryTimer = null;
+        }
+        idx += 1;
+        tryIndex();
+    };
+
+    tryIndex();
+}
+
+function createItemFallback(slot) {
+    const fallback = document.createElement("div");
+    fallback.className = "preview-item-fallback";
+    fallback.textContent = (slot?.name || slot?.id || "?").trim().charAt(0).toUpperCase() || "?";
+    return fallback;
 }
 
 function normalizeItemTexturePath(slot) {
@@ -907,8 +994,7 @@ function createQuestLayer(itemId, textureId, region, className, entityId = "", i
         const img = document.createElement("img");
         img.className = `${className} preview-item-icon`;
         img.alt = itemId;
-        img.loading = "lazy";
-        img.src = `${ITEM_TEXTURE_BASE}${itemId.replace("minecraft:", "")}.png`;
+        attachItemIconFallback(img, { id: itemId, name: itemId.replace("minecraft:", "") }, itemId);
         return img;
     }
 
