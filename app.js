@@ -1,7 +1,7 @@
 ﻿const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
 const DEFAULT_WEEKLY_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/weekly-challenge";
 const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
-const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774656000;
+const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774483200;
 const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 const ITEM_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/item/";
 const BLOCK_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/block/";
@@ -1032,4 +1032,5 @@ function escapeHtml(value) {
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;");
 }
+
 
