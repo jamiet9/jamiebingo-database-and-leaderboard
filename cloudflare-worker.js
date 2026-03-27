@@ -101,9 +101,6 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/submit") {
-      const authError = requireApiKey(request, env);
-      if (authError) return authError;
-
       const body = await request.json();
 
       await env.DB.prepare(`
@@ -356,6 +353,7 @@ async function upsertWeeklyChallengeState(env, body) {
     ).run();
   }
 }
+
 
 
 

@@ -1,7 +1,7 @@
-const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
+﻿const DEFAULT_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/submissions";
 const DEFAULT_WEEKLY_SOURCE = "https://jamiebingo-api.jamie-lee-thompson.workers.dev/weekly-challenge";
 const LEADERBOARD_MIN_FINISHED_AT_EPOCH_SECONDS = 1774396800;
-const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774492240;
+const WEEKLY_RESET_ANCHOR_EPOCH_SECONDS = 1774537841;
 const WEEKLY_RESET_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 const ITEM_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/item/";
 const BLOCK_TEXTURE_BASE = "https://mcasset.cloud/1.21.8/assets/minecraft/textures/block/";
@@ -365,8 +365,12 @@ function normalizeSubmissions(raw) {
         };
         normalized.invalidReason = computeInvalidReason(normalized);
         normalized.isValid = normalized.invalidReason === "";
-        normalized.leaderboardCategory = readSettingValue(settingsLines, "Leaderboard Category", "Custom");
-        normalized.leaderboardCategoryReason = readSettingValue(settingsLines, "Leaderboard Category Reason", "");
+        normalized.leaderboardCategory = normalized.weeklyChallenge
+            ? "Weekly"
+            : readSettingValue(settingsLines, "Leaderboard Category", "Custom");
+        normalized.leaderboardCategoryReason = normalized.weeklyChallenge
+            ? "Matches " + (normalized.weeklyChallengeId || "the current weekly challenge")
+            : readSettingValue(settingsLines, "Leaderboard Category Reason", "");
         normalized.mode = readSettingValue(settingsLines, "Mode", "--");
         normalized.cardDifficulty = readSettingValue(settingsLines, "Card Difficulty", "normal");
         return normalized;
@@ -459,16 +463,10 @@ function renderTable() {
         fragment.querySelector('[data-col="time"]').textContent = formatDuration(row.durationSeconds);
 
         const leaderboardPill = document.createElement("span");
-        leaderboardPill.className = `pill ${row.leaderboardCategory.toLowerCase() === "default" ? "valid" : "invalid"}`;
+        const leaderboardCategory = row.leaderboardCategory.toLowerCase();
+        leaderboardPill.className = `pill ${leaderboardCategory === "default" || leaderboardCategory === "weekly" ? "valid" : "invalid"}`;
         leaderboardPill.textContent = row.leaderboardCategory;
         fragment.querySelector('[data-col="leaderboard"]').appendChild(leaderboardPill);
-        if (row.weeklyChallenge) {
-            const weeklyPill = document.createElement("span");
-            weeklyPill.className = "pill valid";
-            weeklyPill.textContent = "Weekly";
-            fragment.querySelector('[data-col="leaderboard"]').appendChild(document.createTextNode(" "));
-            fragment.querySelector('[data-col="leaderboard"]').appendChild(weeklyPill);
-        }
 
         fragment.querySelector('[data-col="board"]').textContent = row.previewSize > 0 ? `${row.previewSize}x${row.previewSize}` : "--";
         fragment.querySelector('[data-col="mode"]').textContent = row.mode || "--";
@@ -500,6 +498,16 @@ function buildDetailRow(row) {
     preview.className = "detail-preview";
     preview.innerHTML = `<div class="detail-title">Card Preview</div>`;
     preview.appendChild(buildCardPreview(row));
+    if (row.previewSize > 0 && (row.previewSlots.length || row.previewSlotIds.length)) {
+        const fullscreenButton = document.createElement("button");
+        fullscreenButton.type = "button";
+        fullscreenButton.className = "weekly-card-button";
+        fullscreenButton.textContent = "Fullscreen Card Preview";
+        fullscreenButton.addEventListener("click", () => {
+            openPreviewModal(`${row.playerName} Card Preview`, buildCardPreview(row, true));
+        });
+        preview.appendChild(fullscreenButton);
+    }
 
     const meta = document.createElement("section");
     meta.className = "detail-meta";
@@ -1118,6 +1126,8 @@ function escapeHtml(value) {
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;");
 }
+
+
 
 
 
