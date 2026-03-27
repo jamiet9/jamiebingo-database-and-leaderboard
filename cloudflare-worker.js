@@ -15,32 +15,9 @@ export default {
     if (request.method === "GET" && url.pathname === "/submissions") {
       const seasonStart = currentSeasonStart();
       const results = await loadSubmissionRows(env, seasonStart);
+      const weekly = await loadCurrentWeeklyState(env, seasonStart);
 
-      const submissions = results.map((row) => ({
-        playerName: row.playerName,
-        cardSeed: row.cardSeed,
-        worldSeed: row.worldSeed,
-        settingsSeed: row.settingsSeed,
-        durationSeconds: Number(row.durationSeconds || 0),
-        finishedAtEpochSeconds: Number(row.finishedAtEpochSeconds || 0),
-        completed: Boolean(row.completed),
-        participantCount: Number(row.participantCount || 0),
-        commandsUsed: Boolean(row.commandsUsed),
-        voteRerollUsed: Boolean(row.voteRerollUsed),
-        rerollsUsedCount: Number(row.rerollsUsedCount || 0),
-        fakeRerollsUsedCount: Number(row.fakeRerollsUsedCount || 0),
-        previewSize: Number(row.previewSize || 0),
-        teamColorId: Number(row.teamColorId || 0),
-        previewSlots: parseJsonArray(row.previewSlotsJson),
-        previewSlotIds: parseJsonArray(row.previewSlotIdsJson),
-        completedSlotIds: parseJsonArray(row.completedSlotIdsJson),
-        opponentCompletedSlotIds: parseJsonArray(row.opponentCompletedSlotIdsJson),
-        settingsLines: parseJsonArray(row.settingsJson),
-        weeklyChallenge: Boolean(row.weeklyChallenge),
-        weeklyChallengeId: row.weeklyChallengeId || "",
-        leaderboardCategory: row.leaderboardCategory || "Custom",
-        leaderboardCategoryReason: row.leaderboardCategoryReason || ""
-      }));
+      const submissions = results.map((row) => decorateSubmissionWithWeekly(row, weekly));
 
       return Response.json({
         submissions,
@@ -102,6 +79,8 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/submit") {
       const body = await request.json();
+      const weekly = await loadCurrentWeeklyState(env, currentSeasonStart());
+      const weeklyMatch = matchesWeeklySubmission(body, weekly);
 
       await env.DB.prepare(`
         INSERT INTO submissions (
@@ -150,10 +129,10 @@ export default {
         JSON.stringify(asArray(body.completedSlotIds)),
         JSON.stringify(asArray(body.opponentCompletedSlotIds)),
         JSON.stringify(asArray(body.settingsLines)),
-        body.weeklyChallenge ? 1 : 0,
-        body.weeklyChallengeId || "",
-        body.leaderboardCategory || "Custom",
-        body.leaderboardCategoryReason || "",
+        weeklyMatch ? 1 : (body.weeklyChallenge ? 1 : 0),
+        weeklyMatch ? (weekly.challengeId || "") : (body.weeklyChallengeId || ""),
+        weeklyMatch ? "Weekly" : (body.leaderboardCategory || "Custom"),
+        weeklyMatch ? `Matches ${weekly.challengeId || "the current weekly challenge"}` : (body.leaderboardCategoryReason || ""),
         Number(body.submittedAtEpochSeconds || Math.floor(Date.now() / 1000))
       ).run();
 
@@ -239,6 +218,73 @@ async function loadSubmissionRows(env, seasonStart) {
   }
 }
 
+async function loadCurrentWeeklyState(env, baseSeed) {
+  try {
+    const row = await env.DB.prepare(`
+      SELECT
+        challenge_id AS challengeId,
+        base_seed AS baseSeed,
+        next_reset_epoch_seconds AS nextResetEpochSeconds,
+        settings_seed AS settingsSeed,
+        world_seed AS worldSeed,
+        card_seed AS cardSeed
+      FROM weekly_challenge_state
+      WHERE challenge_id = ?
+      LIMIT 1
+    `).bind(`weekly-${baseSeed}`).first();
+    return row || null;
+  } catch {
+    return null;
+  }
+}
+
+function decorateSubmissionWithWeekly(row, weekly) {
+  const submission = {
+    playerName: row.playerName,
+    cardSeed: row.cardSeed,
+    worldSeed: row.worldSeed,
+    settingsSeed: row.settingsSeed,
+    durationSeconds: Number(row.durationSeconds || 0),
+    finishedAtEpochSeconds: Number(row.finishedAtEpochSeconds || 0),
+    completed: Boolean(row.completed),
+    participantCount: Number(row.participantCount || 0),
+    commandsUsed: Boolean(row.commandsUsed),
+    voteRerollUsed: Boolean(row.voteRerollUsed),
+    rerollsUsedCount: Number(row.rerollsUsedCount || 0),
+    fakeRerollsUsedCount: Number(row.fakeRerollsUsedCount || 0),
+    previewSize: Number(row.previewSize || 0),
+    teamColorId: Number(row.teamColorId || 0),
+    previewSlots: parseJsonArray(row.previewSlotsJson),
+    previewSlotIds: parseJsonArray(row.previewSlotIdsJson),
+    completedSlotIds: parseJsonArray(row.completedSlotIdsJson),
+    opponentCompletedSlotIds: parseJsonArray(row.opponentCompletedSlotIdsJson),
+    settingsLines: parseJsonArray(row.settingsJson),
+    weeklyChallenge: Boolean(row.weeklyChallenge),
+    weeklyChallengeId: row.weeklyChallengeId || "",
+    leaderboardCategory: row.leaderboardCategory || "Custom",
+    leaderboardCategoryReason: row.leaderboardCategoryReason || ""
+  };
+
+  if (matchesWeeklySubmission(submission, weekly)) {
+    submission.weeklyChallenge = true;
+    submission.weeklyChallengeId = weekly.challengeId || "";
+    submission.leaderboardCategory = "Weekly";
+    submission.leaderboardCategoryReason = `Matches ${weekly.challengeId || "the current weekly challenge"}`;
+  }
+
+  return submission;
+}
+
+function matchesWeeklySubmission(row, weekly) {
+  if (!weekly) return false;
+  const settingsSeed = String(row?.settingsSeed || "").trim();
+  const worldSeed = String(row?.worldSeed || "").trim();
+  const cardSeed = String(row?.cardSeed || "").trim();
+  return Boolean(settingsSeed && worldSeed && cardSeed)
+    && settingsSeed === String(weekly.settingsSeed || "").trim()
+    && worldSeed === String(weekly.worldSeed || "").trim()
+    && cardSeed === String(weekly.cardSeed || "").trim();
+}
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
@@ -353,6 +399,7 @@ async function upsertWeeklyChallengeState(env, body) {
     ).run();
   }
 }
+
 
 
 
