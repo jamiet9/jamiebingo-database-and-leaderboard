@@ -111,7 +111,7 @@ export default {
         await maybeAdvanceMatchState(env, existingMatch.matchId, now);
       }
       let refreshedMatch = playerName ? await loadActiveMatchForPlayer(env, playerName) : null;
-      if (refreshedMatch?.matchId && refreshedMatch.state === "ready_to_start") {
+      if (await shouldClearPreStartMatch(env, refreshedMatch, now)) {
         await clearActiveMatch(env, refreshedMatch.matchId);
         refreshedMatch = null;
       }
@@ -696,7 +696,11 @@ async function buildOnlineQueueSnapshot(env, playerName, status = "idle", messag
   if (activeMatch?.matchId) {
     await maybeAdvanceMatchState(env, activeMatch.matchId, now);
   }
-  const refreshedActiveMatch = playerName ? await loadActiveMatchForPlayer(env, playerName) : null;
+  let refreshedActiveMatch = playerName ? await loadActiveMatchForPlayer(env, playerName) : null;
+  if (await shouldClearPreStartMatch(env, refreshedActiveMatch, now)) {
+    await clearActiveMatch(env, refreshedActiveMatch.matchId);
+    refreshedActiveMatch = null;
+  }
   if (playerName) {
     const row = await env.DB.prepare(`
       SELECT queue_mode AS queueMode
@@ -902,6 +906,30 @@ async function clearActiveMatch(env, matchId) {
     DELETE FROM online_matches
     WHERE match_id = ?
   `).bind(matchId).run();
+}
+
+async function shouldClearPreStartMatch(env, activeMatch, nowEpochSeconds) {
+  if (!activeMatch?.matchId) return false;
+  const state = String(activeMatch.state || "").trim().toLowerCase();
+  if (!["revealing", "ready_to_start", "launching"].includes(state)) {
+    return false;
+  }
+
+  const now = Number(nowEpochSeconds || 0);
+  const startAfter = Number(activeMatch.startAfterEpochSeconds || 0);
+  const startPayloadPublishedAt = Number(activeMatch.startPayload?.publishedAtEpochSeconds || 0);
+  const staleAnchor = Math.max(startAfter, startPayloadPublishedAt);
+  if (staleAnchor <= 0 || now < staleAnchor + 10) {
+    return false;
+  }
+
+  const runtimeRow = await env.DB.prepare(`
+    SELECT match_id AS matchId
+    FROM online_match_runtime_states
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(activeMatch.matchId).first();
+  return !runtimeRow;
 }
 
 async function upsertOnlineRuntimeState(env, state) {
