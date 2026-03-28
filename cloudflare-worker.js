@@ -329,6 +329,11 @@ export default {
         ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(match_id) DO NOTHING
       `).bind(matchId, settingsSeed, worldSeed, cardSeed, playerName, now).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET state = ?, updated_at_epoch_seconds = ?
+        WHERE match_id = ? AND state IN ('revealing', 'ready_to_start', 'launching')
+      `).bind("launching", now, matchId).run();
       return Response.json(await buildOnlineQueueSnapshot(env, playerName, "matched", "Start payload ready"), {
         headers: corsHeaders()
       });
@@ -854,6 +859,24 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
 
   if (currentState === "ready_to_start" && !hasStartPayload && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 30) {
     await clearActiveMatch(env, matchId);
+    return;
+  }
+
+  if (currentState === "launching" && !hasStartPayload && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 30) {
+    await clearActiveMatch(env, matchId);
+    return;
+  }
+
+  if (currentState === "launching" && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 5 * 60) {
+    const runtimeRow = await env.DB.prepare(`
+      SELECT match_id AS matchId
+      FROM online_match_runtime_states
+      WHERE match_id = ?
+      LIMIT 1
+    `).bind(matchId).first();
+    if (!runtimeRow) {
+      await clearActiveMatch(env, matchId);
+    }
   }
 }
 
