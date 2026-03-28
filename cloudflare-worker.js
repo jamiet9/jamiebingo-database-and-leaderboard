@@ -806,6 +806,12 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
   const now = Number(nowEpochSeconds || 0);
   const currentState = String(match.state || "pending_ready");
   const forceStartAt = Number(match.createdAtEpochSeconds || 0) + 5 * 60;
+  const hasStartPayload = !!(await env.DB.prepare(`
+    SELECT match_id AS matchId
+    FROM online_match_start_payloads
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(matchId).first());
 
   if (currentState === "pending_ready") {
     if (readyCount >= targetPlayerCount || now >= forceStartAt) {
@@ -829,6 +835,11 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
     return;
   }
 
+  if (currentState === "revealing" && !hasStartPayload && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 30) {
+    await clearActiveMatch(env, matchId);
+    return;
+  }
+
   if (currentState === "ready_to_start" && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 5 * 60) {
     await env.DB.prepare(`
       DELETE FROM online_match_players
@@ -838,6 +849,11 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
       DELETE FROM online_matches
       WHERE match_id = ?
     `).bind(matchId).run();
+    return;
+  }
+
+  if (currentState === "ready_to_start" && !hasStartPayload && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 30) {
+    await clearActiveMatch(env, matchId);
   }
 }
 
