@@ -274,6 +274,78 @@ export default {
       });
     }
 
+    if (request.method === "POST" && url.pathname === "/online/match/sync") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      if (!playerName || !matchId) {
+        return Response.json({ status: "error", message: "Player name and match id are required" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await upsertOnlineRuntimeState(env, {
+        matchId,
+        playerName,
+        score: Number(body?.score || 0),
+        completedLines: Number(body?.completedLines || 0),
+        preferredColorId: Number(body?.preferredColorId ?? -1),
+        completedSlotIdsJson: JSON.stringify(Array.isArray(body?.completedSlotIds) ? body.completedSlotIds : []),
+        updatedAtEpochSeconds: now
+      });
+      return Response.json(await buildOnlineRuntimeSnapshot(env, matchId, Number(body?.chatCursor || 0), playerName), {
+        headers: corsHeaders()
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/online/match/chat") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      const channel = normalizeOnlineChatChannel(body?.channel);
+      const message = normalizeChatMessage(body?.message);
+      if (!playerName || !matchId || !message) {
+        return Response.json({ status: "error", message: "Chat payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const sender = await loadOnlineMatchPlayerRow(env, matchId, playerName);
+      if (!sender) {
+        return Response.json({ status: "error", message: "Match player not found" }, {
+          status: 404,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        INSERT INTO online_match_chat_messages (
+          match_id,
+          player_name,
+          channel,
+          team_index,
+          message,
+          created_at_epoch_seconds
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(
+        matchId,
+        playerName,
+        channel,
+        Number(sender.teamIndex || 0),
+        message,
+        now
+      ).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(now, matchId).run();
+      return Response.json({ status: "ok" }, {
+        headers: corsHeaders()
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/weekly-challenge-publish") {
       const authError = requireApiKey(request, env);
       if (authError) return authError;
@@ -468,25 +540,33 @@ async function ensureOnlineQueueTable(env) {
       updated_at_epoch_seconds INTEGER NOT NULL
     )
   `).run();
-  await env.DB.prepare(`
-    CREATE TABLE IF NOT EXISTS online_match_players (
-      match_id TEXT NOT NULL,
-      player_name TEXT NOT NULL UNIQUE,
-      ready INTEGER NOT NULL DEFAULT 0,
-      joined_at_epoch_seconds INTEGER NOT NULL,
-      PRIMARY KEY (match_id, player_name)
-    )
-  `).run();
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_players (
+        match_id TEXT NOT NULL,
+        player_name TEXT NOT NULL UNIQUE,
+        team_index INTEGER NOT NULL DEFAULT 0,
+        ready INTEGER NOT NULL DEFAULT 0,
+        joined_at_epoch_seconds INTEGER NOT NULL,
+        PRIMARY KEY (match_id, player_name)
+      )
+    `).run();
   try {
     await env.DB.prepare(`
       ALTER TABLE online_match_players
       ADD COLUMN ready INTEGER NOT NULL DEFAULT 0
     `).run();
-  } catch {
-  }
-  try {
-    await env.DB.prepare(`
-      ALTER TABLE online_matches
+    } catch {
+    }
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE online_match_players
+        ADD COLUMN team_index INTEGER NOT NULL DEFAULT 0
+      `).run();
+    } catch {
+    }
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE online_matches
       ADD COLUMN start_after_epoch_seconds INTEGER NOT NULL DEFAULT 0
     `).run();
   } catch {
@@ -496,9 +576,32 @@ async function ensureOnlineQueueTable(env) {
       ALTER TABLE online_matches
       ADD COLUMN match_payload_json TEXT NOT NULL DEFAULT '{}'
     `).run();
-  } catch {
+    } catch {
+    }
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_runtime_states (
+        match_id TEXT NOT NULL,
+        player_name TEXT NOT NULL,
+        score INTEGER NOT NULL DEFAULT 0,
+        completed_lines INTEGER NOT NULL DEFAULT 0,
+        preferred_color_id INTEGER NOT NULL DEFAULT -1,
+        completed_slot_ids_json TEXT NOT NULL DEFAULT '[]',
+        updated_at_epoch_seconds INTEGER NOT NULL,
+        PRIMARY KEY (match_id, player_name)
+      )
+    `).run();
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_chat_messages (
+        message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        match_id TEXT NOT NULL,
+        player_name TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        team_index INTEGER NOT NULL DEFAULT 0,
+        message TEXT NOT NULL,
+        created_at_epoch_seconds INTEGER NOT NULL
+      )
+    `).run();
   }
-}
 
 async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
   await env.DB.prepare(`
@@ -517,6 +620,14 @@ async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
     DELETE FROM online_matches
     WHERE updated_at_epoch_seconds < ?
   `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_runtime_states
+    WHERE updated_at_epoch_seconds < ?
+  `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_chat_messages
+    WHERE created_at_epoch_seconds < ?
+  `).bind(Number(nowEpochSeconds || 0) - (ONLINE_QUEUE_STALE_SECONDS * 2)).run();
 }
 
 async function buildOnlineQueueSnapshot(env, playerName, status = "idle", message = "") {
@@ -591,6 +702,15 @@ async function loadActiveMatchForPlayer(env, playerName) {
   };
 }
 
+async function loadOnlineMatchPlayerRow(env, matchId, playerName) {
+  return await env.DB.prepare(`
+    SELECT team_index AS teamIndex
+    FROM online_match_players
+    WHERE match_id = ? AND player_name = ?
+    LIMIT 1
+  `).bind(matchId, playerName).first();
+}
+
 async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
   const match = await env.DB.prepare(`
     SELECT
@@ -653,6 +773,14 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
 async function clearActiveMatch(env, matchId) {
   if (!matchId) return;
   await env.DB.prepare(`
+    DELETE FROM online_match_runtime_states
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_chat_messages
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
     DELETE FROM online_match_players
     WHERE match_id = ?
   `).bind(matchId).run();
@@ -660,6 +788,95 @@ async function clearActiveMatch(env, matchId) {
     DELETE FROM online_matches
     WHERE match_id = ?
   `).bind(matchId).run();
+}
+
+async function upsertOnlineRuntimeState(env, state) {
+  await env.DB.prepare(`
+    INSERT INTO online_match_runtime_states (
+      match_id,
+      player_name,
+      score,
+      completed_lines,
+      preferred_color_id,
+      completed_slot_ids_json,
+      updated_at_epoch_seconds
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(match_id, player_name) DO UPDATE SET
+      score = excluded.score,
+      completed_lines = excluded.completed_lines,
+      preferred_color_id = excluded.preferred_color_id,
+      completed_slot_ids_json = excluded.completed_slot_ids_json,
+      updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
+  `).bind(
+    state.matchId,
+    state.playerName,
+    Math.max(0, Number(state.score || 0)),
+    Math.max(0, Number(state.completedLines || 0)),
+    Number.isFinite(Number(state.preferredColorId)) ? Number(state.preferredColorId) : -1,
+    String(state.completedSlotIdsJson || "[]"),
+    Number(state.updatedAtEpochSeconds || 0)
+  ).run();
+}
+
+async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) {
+  const viewer = playerName ? await loadOnlineMatchPlayerRow(env, matchId, playerName) : null;
+  const viewerTeamIndex = Number(viewer?.teamIndex || 0);
+  const playersResult = await env.DB.prepare(`
+    SELECT
+      p.player_name AS playerName,
+      p.team_index AS teamIndex,
+      p.ready AS ready,
+      COALESCE(r.score, 0) AS score,
+      COALESCE(r.completed_lines, 0) AS completedLines,
+      COALESCE(r.preferred_color_id, -1) AS preferredColorId,
+      COALESCE(r.completed_slot_ids_json, '[]') AS completedSlotIdsJson
+    FROM online_match_players p
+    LEFT JOIN online_match_runtime_states r
+      ON r.match_id = p.match_id AND r.player_name = p.player_name
+    WHERE p.match_id = ?
+    ORDER BY p.joined_at_epoch_seconds ASC, p.player_name ASC
+  `).bind(matchId).all();
+
+  const chatResult = await env.DB.prepare(`
+    SELECT
+      message_id AS messageId,
+      player_name AS playerName,
+      channel AS channel,
+      team_index AS teamIndex,
+      message AS message,
+      created_at_epoch_seconds AS createdAtEpochSeconds
+    FROM online_match_chat_messages
+    WHERE match_id = ? AND message_id > ?
+    ORDER BY message_id ASC
+    LIMIT 100
+  `).bind(matchId, Math.max(0, Number(chatCursor || 0))).all();
+
+  return {
+    status: "ok",
+    players: (playersResult.results || []).map((row) => ({
+      playerName: normalizePlayerName(row.playerName),
+      teamIndex: Number(row.teamIndex || 0),
+      ready: Number(row.ready || 0) !== 0,
+      score: Number(row.score || 0),
+      completedLines: Number(row.completedLines || 0),
+      preferredColorId: Number(row.preferredColorId ?? -1),
+      completedSlotIds: parseJsonArray(row.completedSlotIdsJson)
+    })),
+    chatMessages: (chatResult.results || [])
+      .filter((row) => {
+        const channel = normalizeOnlineChatChannel(row.channel);
+        if (channel !== "TEAM") return true;
+        return Number(row.teamIndex || 0) === viewerTeamIndex;
+      })
+      .map((row) => ({
+        messageId: Number(row.messageId || 0),
+        playerName: normalizePlayerName(row.playerName),
+        channel: normalizeOnlineChatChannel(row.channel),
+        teamIndex: Number(row.teamIndex || 0),
+        message: normalizeChatMessage(row.message),
+        createdAtEpochSeconds: Number(row.createdAtEpochSeconds || 0)
+      }))
+  };
 }
 
 async function computeRevealDurationSeconds(env, matchId) {
@@ -803,16 +1020,18 @@ async function tryCreateMatchesForQueueMode(env, queueMode, nowEpochSeconds) {
         JSON.stringify(matchPayload)
       ).run();
 
-      for (const playerName of players) {
-        await env.DB.prepare(`
-          INSERT INTO online_match_players (
-            match_id,
-            player_name,
-            ready,
-            joined_at_epoch_seconds
-        ) VALUES (?, ?, ?, ?)
-      `).bind(matchId, playerName, 0, nowEpochSeconds).run();
-      }
+        for (const playerName of players) {
+          const teamIndex = Math.floor(players.indexOf(playerName) / teamSizeForQueueMode(queueMode));
+          await env.DB.prepare(`
+            INSERT INTO online_match_players (
+              match_id,
+              player_name,
+              team_index,
+              ready,
+              joined_at_epoch_seconds
+          ) VALUES (?, ?, ?, ?, ?)
+        `).bind(matchId, playerName, teamIndex, 0, nowEpochSeconds).run();
+        }
 
     await env.DB.prepare(`
       DELETE FROM online_queue_entries
@@ -1124,6 +1343,33 @@ function parseJsonArray(value) {
   } catch {
     return [];
   }
+}
+
+function teamSizeForQueueMode(queueMode) {
+  switch (queueMode) {
+    case "CASUAL_2S":
+      return 2;
+    case "CASUAL_3S":
+      return 3;
+    case "CASUAL_4S":
+      return 4;
+    case "CASUAL_FFA":
+    case "CASUAL_1V1":
+    case "RANKED_1V1":
+    default:
+      return 1;
+  }
+}
+
+function normalizeOnlineChatChannel(value) {
+  const text = normalizeText(value).toUpperCase();
+  return text === "TEAM" ? "TEAM" : "GLOBAL";
+}
+
+function normalizeChatMessage(value) {
+  const text = normalizeText(value);
+  if (!text) return "";
+  return text.length > 256 ? text.slice(0, 256) : text;
 }
 
 function asArray(value) {
