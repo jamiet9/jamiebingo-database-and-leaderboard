@@ -213,6 +213,36 @@ export default {
       });
     }
 
+    if (request.method === "POST" && url.pathname === "/online/match/leave") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      if (!playerName) {
+        return Response.json({
+          counts: await loadOnlineQueueCounts(env),
+          activeQueue: null,
+          activeMatch: null,
+          status: "error",
+          message: "Player name is required"
+        }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const activeMatch = await loadActiveMatchForPlayer(env, playerName);
+      if (!activeMatch) {
+        return Response.json(await buildOnlineQueueSnapshot(env, playerName, "idle", "No active match"), {
+          headers: corsHeaders()
+        });
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      await dissolvePendingMatch(env, activeMatch.matchId, playerName, now);
+      const snapshot = await buildOnlineQueueSnapshot(env, playerName, "idle", "Left match");
+      return Response.json(snapshot, {
+        headers: corsHeaders()
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/weekly-challenge-publish") {
       const authError = requireApiKey(request, env);
       if (authError) return authError;
@@ -430,6 +460,13 @@ async function ensureOnlineQueueTable(env) {
     `).run();
   } catch {
   }
+  try {
+    await env.DB.prepare(`
+      ALTER TABLE online_matches
+      ADD COLUMN match_payload_json TEXT NOT NULL DEFAULT '{}'
+    `).run();
+  } catch {
+  }
 }
 
 async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
@@ -486,7 +523,8 @@ async function loadActiveMatchForPlayer(env, playerName) {
       m.state AS state,
       m.target_player_count AS targetPlayerCount,
       m.created_at_epoch_seconds AS createdAtEpochSeconds,
-      m.start_after_epoch_seconds AS startAfterEpochSeconds
+      m.start_after_epoch_seconds AS startAfterEpochSeconds,
+      m.match_payload_json AS matchPayloadJson
     FROM online_match_players p
     JOIN online_matches m ON m.match_id = p.match_id
     WHERE p.player_name = ?
@@ -514,6 +552,7 @@ async function loadActiveMatchForPlayer(env, playerName) {
     state: String(row.state || "pending"),
     targetPlayerCount: Number(row.targetPlayerCount || 0),
     startAfterEpochSeconds: Number(row.startAfterEpochSeconds || 0),
+    settingsLines: parseJsonArray(tryParseMatchPayload(row.matchPayloadJson)?.settingsLines),
     playerNames,
     readyPlayerNames
   };
@@ -565,6 +604,61 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
   }
 }
 
+async function dissolvePendingMatch(env, matchId, leavingPlayerName, nowEpochSeconds) {
+  const match = await env.DB.prepare(`
+    SELECT queue_mode AS queueMode
+    FROM online_matches
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(matchId).first();
+  if (!match) return;
+
+  const { results } = await env.DB.prepare(`
+    SELECT player_name AS playerName
+    FROM online_match_players
+    WHERE match_id = ?
+  `).bind(matchId).all();
+
+  const remainingPlayers = (results || [])
+    .map((row) => normalizePlayerName(row?.playerName))
+    .filter((name) => name && name !== leavingPlayerName);
+
+  await env.DB.prepare(`
+    DELETE FROM online_match_players
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
+    DELETE FROM online_matches
+    WHERE match_id = ?
+  `).bind(matchId).run();
+
+  const queueMode = normalizeQueueMode(match.queueMode);
+  if (!queueMode) return;
+
+  for (const playerName of remainingPlayers) {
+    await env.DB.prepare(`
+      INSERT INTO online_queue_entries (
+        player_name,
+        queue_mode,
+        controller_preferences_json,
+        world_preferences_json,
+        queued_at_epoch_seconds,
+        updated_at_epoch_seconds
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(player_name) DO UPDATE SET
+        queue_mode = excluded.queue_mode,
+        updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
+    `).bind(
+      playerName,
+      queueMode,
+      "{}",
+      "{}",
+      nowEpochSeconds,
+      nowEpochSeconds
+    ).run();
+  }
+}
+
 async function loadOnlineQueueCounts(env) {
   const counts = {
     RANKED_1V1: 0,
@@ -592,28 +686,38 @@ async function tryCreateMatchesForQueueMode(env, queueMode, nowEpochSeconds) {
   if (!targetPlayerCount) return;
   while (true) {
     const { results } = await env.DB.prepare(`
-      SELECT player_name AS playerName
+      SELECT
+        player_name AS playerName,
+        controller_preferences_json AS controllerPreferencesJson,
+        world_preferences_json AS worldPreferencesJson
       FROM online_queue_entries
       WHERE queue_mode = ?
       ORDER BY queued_at_epoch_seconds ASC, player_name ASC
       LIMIT ?
     `).bind(queueMode, targetPlayerCount).all();
-    const players = (results || []).map((row) => normalizePlayerName(row?.playerName)).filter(Boolean);
-    if (players.length < targetPlayerCount) {
+    const queueRows = (results || []).map((row) => ({
+      playerName: normalizePlayerName(row?.playerName),
+      controllerPreferences: parseJsonObject(row?.controllerPreferencesJson),
+      worldPreferences: parseJsonObject(row?.worldPreferencesJson)
+    })).filter((row) => row.playerName);
+    const players = queueRows.map((row) => row.playerName);
+    if (queueRows.length < targetPlayerCount) {
       return;
     }
 
     const matchId = `match-${queueMode.toLowerCase()}-${nowEpochSeconds}-${Math.random().toString(36).slice(2, 8)}`;
-      await env.DB.prepare(`
-        INSERT INTO online_matches (
-          match_id,
-          queue_mode,
-          state,
-          target_player_count,
-          created_at_epoch_seconds,
-          updated_at_epoch_seconds,
-          start_after_epoch_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    const matchPayload = buildMatchPayload(queueMode, queueRows, nowEpochSeconds);
+    await env.DB.prepare(`
+      INSERT INTO online_matches (
+        match_id,
+        queue_mode,
+        state,
+        target_player_count,
+        created_at_epoch_seconds,
+        updated_at_epoch_seconds,
+        start_after_epoch_seconds,
+        match_payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         matchId,
         queueMode,
@@ -621,7 +725,8 @@ async function tryCreateMatchesForQueueMode(env, queueMode, nowEpochSeconds) {
         targetPlayerCount,
         nowEpochSeconds,
         nowEpochSeconds,
-        0
+        0,
+        JSON.stringify(matchPayload)
       ).run();
 
       for (const playerName of players) {
@@ -640,6 +745,146 @@ async function tryCreateMatchesForQueueMode(env, queueMode, nowEpochSeconds) {
       WHERE player_name IN (${players.map(() => "?").join(", ")})
     `).bind(...players).run();
   }
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(String(value || "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function tryParseMatchPayload(value) {
+  try {
+    const parsed = JSON.parse(String(value || "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
+  const controllerPreferences = queueRows.map((row) => row.controllerPreferences || {});
+  const worldPreferences = queueRows.map((row) => row.worldPreferences || {});
+  const settingsLines = [
+    `Mode: ${resolveEnumPreference(controllerPreferences, "win", ["FULL", "LINE", "LOCKOUT", "RARITY", "BLIND", "HANGMAN", "GUNGAME", "GAMEGUN"], "FULL")}`,
+    `Card Size: ${resolveCardSize(controllerPreferences)}`,
+    `Card Difficulty: ${resolveEnumPreference(controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal")}`,
+    `Game Difficulty: ${resolveEnumPreference(controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal")}`,
+    `Effects: ${resolveTogglePreference(controllerPreferences, "effects", false) ? "Enabled" : "Disabled"}`,
+    `RTP: ${resolveTogglePreference(controllerPreferences, "rtp", false) ? "Enabled" : "Disabled"}`,
+    `Hostile Mobs: ${resolveTogglePreference(controllerPreferences, "hostileMobs", true) ? "Enabled" : "Disabled"}`,
+    `Hunger: ${resolveTogglePreference(controllerPreferences, "hunger", true) ? "Enabled" : "Disabled"}`,
+    `Natural Regen: ${resolveTogglePreference(controllerPreferences, "naturalRegen", true) ? "On" : "Off"}`,
+    `Keep Inventory: ${resolveTogglePreference(controllerPreferences, "keepInventory", false) ? "Enabled" : "Disabled"}`,
+    `Hardcore: ${resolveTogglePreference(controllerPreferences, "hardcore", false) ? "Enabled" : "Disabled"}`,
+    `Team Chest: ${resolveTogglePreference(controllerPreferences, "teamChest", true) ? "Enabled" : "Disabled"}`,
+    `Mines: ${resolveTogglePreference(controllerPreferences, "mines", false) ? "Enabled" : "Disabled"}`,
+    `Power Slot: ${resolveTogglePreference(controllerPreferences, "powerSlot", false) ? "Enabled" : "Disabled"}`,
+    `Draft: ${resolveTogglePreference(controllerPreferences, "draft", false) ? "Enabled" : "Disabled"}`,
+    `Rerolls: ${resolveTogglePreference(controllerPreferences, "rerolls", false) ? "Enabled" : "Disabled"}`,
+    `Fake Rerolls: ${resolveTogglePreference(controllerPreferences, "fakeRerolls", false) ? "Enabled" : "Disabled"}`,
+    "PVP: Disabled",
+    "Adventure: Disabled",
+    "Late Join: Disabled",
+    "Team Sync: Enabled",
+    "Start Delay: 60s",
+    "New Seed Every Game: Enabled",
+    `World Type: ${resolveWorldTypeLabel(resolveWorldType(worldPreferences))}`,
+    `World Surface Cave Biomes: ${resolveTogglePreference(worldPreferences, "surfaceCaveBiomes", false) ? "Enabled" : "Disabled"}`,
+    `Prelit Portals: ${resolvePrelitLabel(resolvePrelitPortals(worldPreferences))}`
+  ];
+  return {
+    generatedAtEpochSeconds: nowEpochSeconds,
+    queueMode,
+    settingsLines
+  };
+}
+
+function resolveTogglePreference(preferenceObjects, key, defaultValue) {
+  let onWeight = 1;
+  let offWeight = 1;
+  for (const preferences of preferenceObjects || []) {
+    const value = String(preferences?.[key] || "").trim().toUpperCase();
+    if (value === "ON") onWeight += 1;
+    if (value === "OFF") offWeight += 1;
+  }
+  if (onWeight === offWeight) return defaultValue;
+  return onWeight > offWeight;
+}
+
+function resolveEnumPreference(preferenceObjects, key, options, defaultValue) {
+  const weights = new Map();
+  for (const option of options) {
+    weights.set(String(option).toUpperCase(), 1);
+  }
+  for (const preferences of preferenceObjects || []) {
+    const value = String(preferences?.[key] || "").trim().toUpperCase();
+    if (value === "" || value === "RANDOM") continue;
+    if (weights.has(value)) {
+      weights.set(value, weights.get(value) + 1);
+    }
+  }
+  let best = String(defaultValue || options[0] || "").toUpperCase();
+  let bestWeight = -1;
+  for (const option of options) {
+    const normalized = String(option).toUpperCase();
+    const weight = Number(weights.get(normalized) || 0);
+    if (weight > bestWeight) {
+      best = normalized;
+      bestWeight = weight;
+    }
+  }
+  return best;
+}
+
+function resolveCardSize(preferenceObjects) {
+  const sizeWeights = new Map([[2, 1], [3, 1], [4, 1], [5, 1]]);
+  for (const preferences of preferenceObjects || []) {
+    if (preferences?.randomCardSize) continue;
+    const size = Number(preferences?.cardSize || 0);
+    if (sizeWeights.has(size)) {
+      sizeWeights.set(size, sizeWeights.get(size) + 1);
+    }
+  }
+  let bestSize = 5;
+  let bestWeight = -1;
+  for (const [size, weight] of sizeWeights.entries()) {
+    if (weight > bestWeight) {
+      bestSize = size;
+      bestWeight = weight;
+    }
+  }
+  return `${bestSize}x${bestSize}`;
+}
+
+function resolveWorldType(preferenceObjects) {
+  return Number(resolveEnumPreference(preferenceObjects, "worldTypeMode", ["0", "1", "2", "3", "4"], "0") || 0);
+}
+
+function resolveWorldTypeLabel(worldTypeMode) {
+  return ({
+    0: "Normal",
+    1: "Amplified",
+    2: "Superflat",
+    3: "Single Biome",
+    4: "Custom Biome Size"
+  })[Number(worldTypeMode || 0)] || "Normal";
+}
+
+function resolvePrelitPortals(preferenceObjects) {
+  return Number(resolveEnumPreference(preferenceObjects, "prelitPortalsMode", ["0", "1", "2", "3"], "0") || 0);
+}
+
+function resolvePrelitLabel(mode) {
+  return ({
+    0: "Off",
+    1: "Nether",
+    2: "End",
+    3: "Both"
+  })[Number(mode || 0)] || "Off";
 }
 
 function normalizePlayerName(value) {
