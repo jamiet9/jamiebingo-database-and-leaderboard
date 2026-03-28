@@ -285,6 +285,13 @@ export default {
         });
       }
       const now = Math.floor(Date.now() / 1000);
+      const sender = await loadOnlineMatchPlayerRow(env, matchId, playerName);
+      if (!sender) {
+        return Response.json({ status: "error", message: "Match player not found" }, {
+          status: 404,
+          headers: corsHeaders()
+        });
+      }
       await upsertOnlineRuntimeState(env, {
         matchId,
         playerName,
@@ -294,6 +301,14 @@ export default {
         completedSlotIdsJson: JSON.stringify(Array.isArray(body?.completedSlotIds) ? body.completedSlotIds : []),
         updatedAtEpochSeconds: now
       });
+      if (Array.isArray(body?.teamChestSlots)) {
+        await upsertOnlineTeamChestState(env, {
+          matchId,
+          teamIndex: Number(sender.teamIndex || 0),
+          chestSlotsJson: JSON.stringify(body.teamChestSlots),
+          updatedAtEpochSeconds: now
+        });
+      }
       await env.DB.prepare(`
         UPDATE online_matches
         SET state = ?, updated_at_epoch_seconds = ?
@@ -381,6 +396,85 @@ export default {
         SET updated_at_epoch_seconds = ?
         WHERE match_id = ?
       `).bind(now, matchId).run();
+      return Response.json({ status: "ok" }, {
+        headers: corsHeaders()
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/online/match/vote-draw") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      if (!playerName || !matchId) {
+        return Response.json({ status: "error", message: "Vote draw payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const sender = await loadOnlineMatchPlayerRow(env, matchId, playerName);
+      if (!sender) {
+        return Response.json({ status: "error", message: "Match player not found" }, {
+          status: 404,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        INSERT INTO online_match_draw_votes (
+          match_id,
+          player_name,
+          voted_at_epoch_seconds
+        ) VALUES (?, ?, ?)
+        ON CONFLICT(match_id, player_name) DO UPDATE SET
+          voted_at_epoch_seconds = excluded.voted_at_epoch_seconds
+      `).bind(matchId, playerName, now).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(now, matchId).run();
+      return Response.json({ status: "ok" }, {
+        headers: corsHeaders()
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/online/match/forfeit") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      if (!playerName || !matchId) {
+        return Response.json({ status: "error", message: "Forfeit payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const sender = await loadOnlineMatchPlayerRow(env, matchId, playerName);
+      if (!sender) {
+        return Response.json({ status: "error", message: "Match player not found" }, {
+          status: 404,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        INSERT INTO online_match_forfeits (
+          match_id,
+          player_name,
+          forfeited_at_epoch_seconds
+        ) VALUES (?, ?, ?)
+        ON CONFLICT(match_id, player_name) DO UPDATE SET
+          forfeited_at_epoch_seconds = excluded.forfeited_at_epoch_seconds
+      `).bind(matchId, playerName, now).run();
+      await env.DB.prepare(`
+        DELETE FROM online_match_draw_votes
+        WHERE match_id = ? AND player_name = ?
+      `).bind(matchId, playerName).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(now, matchId).run();
+      await appendSystemMatchChat(env, matchId, `${playerName} forfeited the online match.`);
       return Response.json({ status: "ok" }, {
         headers: corsHeaders()
       });
@@ -651,6 +745,31 @@ async function ensureOnlineQueueTable(env) {
         published_at_epoch_seconds INTEGER NOT NULL
       )
     `).run();
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_team_chests (
+        match_id TEXT NOT NULL,
+        team_index INTEGER NOT NULL,
+        chest_slots_json TEXT NOT NULL DEFAULT '[]',
+        updated_at_epoch_seconds INTEGER NOT NULL,
+        PRIMARY KEY (match_id, team_index)
+      )
+    `).run();
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_draw_votes (
+        match_id TEXT NOT NULL,
+        player_name TEXT NOT NULL,
+        voted_at_epoch_seconds INTEGER NOT NULL,
+        PRIMARY KEY (match_id, player_name)
+      )
+    `).run();
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_forfeits (
+        match_id TEXT NOT NULL,
+        player_name TEXT NOT NULL,
+        forfeited_at_epoch_seconds INTEGER NOT NULL,
+        PRIMARY KEY (match_id, player_name)
+      )
+    `).run();
   }
 
 async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
@@ -686,6 +805,26 @@ async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
     DELETE FROM online_match_chat_messages
     WHERE created_at_epoch_seconds < ?
   `).bind(Number(nowEpochSeconds || 0) - (ONLINE_QUEUE_STALE_SECONDS * 2)).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_draw_votes
+    WHERE match_id IN (
+      SELECT match_id
+      FROM online_matches
+      WHERE updated_at_epoch_seconds < ?
+    )
+  `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_forfeits
+    WHERE match_id IN (
+      SELECT match_id
+      FROM online_matches
+      WHERE updated_at_epoch_seconds < ?
+    )
+  `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_team_chests
+    WHERE updated_at_epoch_seconds < ?
+  `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
 }
 
 async function buildOnlineQueueSnapshot(env, playerName, status = "idle", message = "") {
@@ -899,6 +1038,14 @@ async function clearActiveMatch(env, matchId) {
     WHERE match_id = ?
   `).bind(matchId).run();
   await env.DB.prepare(`
+    DELETE FROM online_match_draw_votes
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_forfeits
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
     DELETE FROM online_match_players
     WHERE match_id = ?
   `).bind(matchId).run();
@@ -960,9 +1107,100 @@ async function upsertOnlineRuntimeState(env, state) {
   ).run();
 }
 
+async function upsertOnlineTeamChestState(env, state) {
+  await env.DB.prepare(`
+    INSERT INTO online_match_team_chests (
+      match_id,
+      team_index,
+      chest_slots_json,
+      updated_at_epoch_seconds
+    ) VALUES (?, ?, ?, ?)
+    ON CONFLICT(match_id, team_index) DO UPDATE SET
+      chest_slots_json = excluded.chest_slots_json,
+      updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
+  `).bind(
+    state.matchId,
+    Number(state.teamIndex || 0),
+    String(state.chestSlotsJson || "[]"),
+    Number(state.updatedAtEpochSeconds || 0)
+  ).run();
+}
+
+async function appendSystemMatchChat(env, matchId, message) {
+  const text = normalizeChatMessage(message);
+  if (!matchId || !text) return;
+  await env.DB.prepare(`
+    INSERT INTO online_match_chat_messages (
+      match_id,
+      player_name,
+      channel,
+      team_index,
+      message,
+      created_at_epoch_seconds
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(
+    matchId,
+    "System",
+    "GLOBAL",
+    -1,
+    text,
+    Math.floor(Date.now() / 1000)
+  ).run();
+}
+
+async function autoForfeitStalePlayers(env, matchId, nowEpochSeconds) {
+  const { results } = await env.DB.prepare(`
+    SELECT
+      p.player_name AS playerName,
+      COALESCE(r.updated_at_epoch_seconds, 0) AS updatedAtEpochSeconds
+    FROM online_match_players p
+    LEFT JOIN online_match_runtime_states r
+      ON r.match_id = p.match_id AND r.player_name = p.player_name
+    LEFT JOIN online_match_forfeits f
+      ON f.match_id = p.match_id AND f.player_name = p.player_name
+    WHERE p.match_id = ?
+      AND f.player_name IS NULL
+  `).bind(matchId).all();
+  for (const row of results || []) {
+    const playerName = normalizePlayerName(row?.playerName);
+    const updatedAt = Number(row?.updatedAtEpochSeconds || 0);
+    if (!playerName || updatedAt <= 0 || nowEpochSeconds < updatedAt + 120) continue;
+    await env.DB.prepare(`
+      INSERT INTO online_match_forfeits (
+        match_id,
+        player_name,
+        forfeited_at_epoch_seconds
+      ) VALUES (?, ?, ?)
+      ON CONFLICT(match_id, player_name) DO NOTHING
+    `).bind(matchId, playerName, nowEpochSeconds).run();
+    await env.DB.prepare(`
+      DELETE FROM online_match_draw_votes
+      WHERE match_id = ? AND player_name = ?
+    `).bind(matchId, playerName).run();
+    await appendSystemMatchChat(env, matchId, `${playerName} disconnected and forfeited after 2 minutes.`);
+  }
+}
+
 async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) {
+  await autoForfeitStalePlayers(env, matchId, Math.floor(Date.now() / 1000));
   const viewer = playerName ? await loadOnlineMatchPlayerRow(env, matchId, playerName) : null;
   const viewerTeamIndex = Number(viewer?.teamIndex || 0);
+  const matchRow = await env.DB.prepare(`
+    SELECT match_payload_json AS matchPayloadJson
+    FROM online_matches
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(matchId).first();
+  const forfeitsResult = await env.DB.prepare(`
+    SELECT player_name AS playerName
+    FROM online_match_forfeits
+    WHERE match_id = ?
+  `).bind(matchId).all();
+  const drawVotesResult = await env.DB.prepare(`
+    SELECT player_name AS playerName
+    FROM online_match_draw_votes
+    WHERE match_id = ?
+  `).bind(matchId).all();
   const playersResult = await env.DB.prepare(`
     SELECT
       p.player_name AS playerName,
@@ -992,18 +1230,51 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     ORDER BY message_id ASC
     LIMIT 100
   `).bind(matchId, Math.max(0, Number(chatCursor || 0))).all();
+  const forfeitedPlayers = new Set((forfeitsResult.results || []).map((row) => normalizePlayerName(row?.playerName)).filter(Boolean));
+  const drawVoters = new Set((drawVotesResult.results || []).map((row) => normalizePlayerName(row?.playerName)).filter(Boolean));
+  const players = (playersResult.results || []).map((row) => ({
+    playerName: normalizePlayerName(row.playerName),
+    teamIndex: Number(row.teamIndex || 0),
+    ready: Number(row.ready || 0) !== 0,
+    score: Number(row.score || 0),
+    completedLines: Number(row.completedLines || 0),
+    preferredColorId: Number(row.preferredColorId ?? -1),
+    completedSlotIds: parseJsonArray(row.completedSlotIdsJson),
+    forfeited: forfeitedPlayers.has(normalizePlayerName(row.playerName))
+  }));
+  const teamCompletedSlotIds = Array.from(new Set(
+    players
+      .filter((player) => Number(player.teamIndex || 0) === viewerTeamIndex)
+      .flatMap((player) => Array.isArray(player.completedSlotIds) ? player.completedSlotIds : [])
+      .filter((slotId) => typeof slotId === "string" && slotId.trim() !== "")
+  ));
+  const teamChestRow = await env.DB.prepare(`
+    SELECT chest_slots_json AS chestSlotsJson
+    FROM online_match_team_chests
+    WHERE match_id = ? AND team_index = ?
+    LIMIT 1
+  `).bind(matchId, viewerTeamIndex).first();
+  const outcome = computeOnlineMatchOutcome(tryParseMatchPayload(matchRow?.matchPayloadJson), players, drawVoters);
+  if (outcome.resultState !== "active") {
+    await env.DB.prepare(`
+      UPDATE online_matches
+      SET state = ?, updated_at_epoch_seconds = ?
+      WHERE match_id = ?
+    `).bind(outcome.resultState === "draw" ? "drawn" : "finished", Math.floor(Date.now() / 1000), matchId).run();
+  }
 
   return {
     status: "ok",
-    players: (playersResult.results || []).map((row) => ({
-      playerName: normalizePlayerName(row.playerName),
-      teamIndex: Number(row.teamIndex || 0),
-      ready: Number(row.ready || 0) !== 0,
-      score: Number(row.score || 0),
-      completedLines: Number(row.completedLines || 0),
-      preferredColorId: Number(row.preferredColorId ?? -1),
-      completedSlotIds: parseJsonArray(row.completedSlotIdsJson)
-    })),
+    players,
+    drawVotes: drawVoters.size,
+    activePlayers: players.filter((player) => !player.forfeited).length,
+    localDrawVoted: playerName ? drawVoters.has(playerName) : false,
+    localForfeited: playerName ? forfeitedPlayers.has(playerName) : false,
+    resultState: outcome.resultState,
+    resultMessage: outcome.resultMessage,
+    winnerPlayerNames: outcome.winnerPlayerNames,
+    teamCompletedSlotIds,
+    teamChestSlots: parseJsonArray(teamChestRow?.chestSlotsJson),
     chatMessages: (chatResult.results || [])
       .filter((row) => {
         const channel = normalizeOnlineChatChannel(row.channel);
@@ -1019,6 +1290,56 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
         createdAtEpochSeconds: Number(row.createdAtEpochSeconds || 0)
       }))
   };
+}
+
+function computeOnlineMatchOutcome(matchPayload, players, drawVoters) {
+  const normalizedPlayers = Array.isArray(players) ? players : [];
+  const activePlayers = normalizedPlayers.filter((player) => !player.forfeited);
+  if (activePlayers.length === 0) {
+    return { resultState: "draw", resultMessage: "Everyone was eliminated.", winnerPlayerNames: [] };
+  }
+  if (activePlayers.length > 0 && drawVoters instanceof Set && drawVoters.size >= activePlayers.length) {
+    return { resultState: "draw", resultMessage: "Draw vote passed.", winnerPlayerNames: [] };
+  }
+
+  const activeTeams = new Map();
+  for (const player of activePlayers) {
+    const existing = activeTeams.get(player.teamIndex) || {
+      players: [],
+      completedLines: 0,
+      completedSlotCount: 0,
+      score: 0
+    };
+    existing.players.push(player.playerName);
+    existing.completedLines = Math.max(existing.completedLines, Number(player.completedLines || 0));
+    existing.completedSlotCount = Math.max(existing.completedSlotCount, Array.isArray(player.completedSlotIds) ? player.completedSlotIds.length : 0);
+    existing.score = Math.max(existing.score, Number(player.score || 0));
+    activeTeams.set(player.teamIndex, existing);
+  }
+  if (activeTeams.size === 1 && normalizedPlayers.length > 1) {
+    const winner = Array.from(activeTeams.values())[0];
+    return { resultState: "winner", resultMessage: "Won by elimination.", winnerPlayerNames: winner.players };
+  }
+
+  const win = String(matchPayload?.win || "").toUpperCase();
+  const cardSize = Math.max(1, Number(matchPayload?.cardSize || 5));
+  if (win === "LINE") {
+    for (const team of activeTeams.values()) {
+      if (team.completedLines > 0) {
+        return { resultState: "winner", resultMessage: "Completed a line.", winnerPlayerNames: team.players };
+      }
+    }
+  }
+  if (win === "FULL" || win === "BLIND") {
+    const targetSlots = cardSize * cardSize;
+    for (const team of activeTeams.values()) {
+      if (team.completedSlotCount >= targetSlots) {
+        return { resultState: "winner", resultMessage: "Completed the card.", winnerPlayerNames: team.players };
+      }
+    }
+  }
+
+  return { resultState: "active", resultMessage: "", winnerPlayerNames: [] };
 }
 
 async function computeRevealDurationSeconds(env, matchId) {
@@ -1204,26 +1525,27 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   const controllerPreferences = queueRows.map((row) => row.controllerPreferences || {});
   const worldPreferences = queueRows.map((row) => row.worldPreferences || {});
   const matchSeed = (nowEpochSeconds * 1000003) ^ Math.floor(Math.random() * 2147483647);
-  const win = resolveEnumPreference(controllerPreferences, "win", ["FULL", "LINE", "LOCKOUT", "RARITY", "BLIND", "HANGMAN", "GUNGAME", "GAMEGUN"], "FULL");
-  const cardSize = resolveCardSizeValue(controllerPreferences);
-  const cardDifficulty = resolveEnumPreference(controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal").toLowerCase();
-  const gameDifficulty = resolveEnumPreference(controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal").toLowerCase();
-  const effectsEnabled = resolveTogglePreference(controllerPreferences, "effects", false);
-  const rtpEnabled = resolveTogglePreference(controllerPreferences, "rtp", false);
-  const hostileMobsEnabled = resolveTogglePreference(controllerPreferences, "hostileMobs", true);
-  const hungerEnabled = resolveTogglePreference(controllerPreferences, "hunger", true);
-  const naturalRegenEnabled = resolveTogglePreference(controllerPreferences, "naturalRegen", true);
-  const keepInventoryEnabled = resolveTogglePreference(controllerPreferences, "keepInventory", false);
-  const hardcoreEnabled = resolveTogglePreference(controllerPreferences, "hardcore", false);
-  const teamChestEnabled = resolveTogglePreference(controllerPreferences, "teamChest", true);
-  const minesEnabled = resolveTogglePreference(controllerPreferences, "mines", false);
-  const powerSlotEnabled = resolveTogglePreference(controllerPreferences, "powerSlot", false);
-  const draftEnabled = resolveTogglePreference(controllerPreferences, "draft", false);
-  const rerollsEnabled = resolveTogglePreference(controllerPreferences, "rerolls", false);
-  const fakeRerollsEnabled = resolveTogglePreference(controllerPreferences, "fakeRerolls", false);
-  const worldTypeMode = resolveWorldType(worldPreferences);
-  const surfaceCaveBiomes = resolveTogglePreference(worldPreferences, "surfaceCaveBiomes", false);
-  const prelitPortalsMode = resolvePrelitPortals(worldPreferences);
+  const rng = createSeededRandom(matchSeed);
+  const win = resolveEnumPreference(rng, controllerPreferences, "win", ["FULL", "LINE", "LOCKOUT", "RARITY", "BLIND", "HANGMAN", "GUNGAME", "GAMEGUN"], "FULL");
+  const cardSize = resolveCardSizeValue(rng, controllerPreferences);
+  const cardDifficulty = resolveEnumPreference(rng, controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal").toLowerCase();
+  const gameDifficulty = resolveEnumPreference(rng, controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal").toLowerCase();
+  const effectsEnabled = resolveTogglePreference(rng, controllerPreferences, "effects", false);
+  const rtpEnabled = resolveTogglePreference(rng, controllerPreferences, "rtp", false);
+  const hostileMobsEnabled = resolveTogglePreference(rng, controllerPreferences, "hostileMobs", true);
+  const hungerEnabled = resolveTogglePreference(rng, controllerPreferences, "hunger", true);
+  const naturalRegenEnabled = resolveTogglePreference(rng, controllerPreferences, "naturalRegen", true);
+  const keepInventoryEnabled = resolveTogglePreference(rng, controllerPreferences, "keepInventory", false);
+  const hardcoreEnabled = resolveTogglePreference(rng, controllerPreferences, "hardcore", false);
+  const teamChestEnabled = resolveTogglePreference(rng, controllerPreferences, "teamChest", true);
+  const minesEnabled = resolveTogglePreference(rng, controllerPreferences, "mines", false);
+  const powerSlotEnabled = resolveTogglePreference(rng, controllerPreferences, "powerSlot", false);
+  const draftEnabled = resolveTogglePreference(rng, controllerPreferences, "draft", false);
+  const rerollsEnabled = resolveTogglePreference(rng, controllerPreferences, "rerolls", false);
+  const fakeRerollsEnabled = resolveTogglePreference(rng, controllerPreferences, "fakeRerolls", false);
+  const worldTypeMode = resolveWorldType(rng, worldPreferences);
+  const surfaceCaveBiomes = resolveTogglePreference(rng, worldPreferences, "surfaceCaveBiomes", false);
+  const prelitPortalsMode = resolvePrelitPortals(rng, worldPreferences);
   const settingsLines = [
     `Mode: ${win}`,
     `Card Size: ${cardSize}x${cardSize}`,
@@ -1255,6 +1577,7 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   return {
     generatedAtEpochSeconds: nowEpochSeconds,
     matchSeed,
+    playerCount: Array.isArray(queueRows) ? queueRows.length : 1,
     queueMode,
     win,
     cardSize,
@@ -1280,7 +1603,7 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   };
 }
 
-function resolveTogglePreference(preferenceObjects, key, defaultValue) {
+function resolveTogglePreference(rng, preferenceObjects, key, defaultValue) {
   let onWeight = 1;
   let offWeight = 1;
   for (const preferences of preferenceObjects || []) {
@@ -1288,11 +1611,11 @@ function resolveTogglePreference(preferenceObjects, key, defaultValue) {
     if (value === "ON") onWeight += 1;
     if (value === "OFF") offWeight += 1;
   }
-  if (onWeight === offWeight) return defaultValue;
-  return onWeight > offWeight;
+  if (onWeight <= 0 && offWeight <= 0) return defaultValue;
+  return weightedBoolean(rng, onWeight, offWeight, defaultValue);
 }
 
-function resolveEnumPreference(preferenceObjects, key, options, defaultValue) {
+function resolveEnumPreference(rng, preferenceObjects, key, options, defaultValue) {
   const weights = new Map();
   for (const option of options) {
     weights.set(String(option).toUpperCase(), 1);
@@ -1304,20 +1627,15 @@ function resolveEnumPreference(preferenceObjects, key, options, defaultValue) {
       weights.set(value, weights.get(value) + 1);
     }
   }
-  let best = String(defaultValue || options[0] || "").toUpperCase();
-  let bestWeight = -1;
-  for (const option of options) {
-    const normalized = String(option).toUpperCase();
-    const weight = Number(weights.get(normalized) || 0);
-    if (weight > bestWeight) {
-      best = normalized;
-      bestWeight = weight;
-    }
-  }
-  return best;
+  return weightedChoice(
+    rng,
+    options.map((option) => String(option).toUpperCase()),
+    options.map((option) => Number(weights.get(String(option).toUpperCase()) || 0)),
+    String(defaultValue || options[0] || "").toUpperCase()
+  );
 }
 
-function resolveCardSize(preferenceObjects) {
+function resolveCardSize(rng, preferenceObjects) {
   const sizeWeights = new Map([[2, 1], [3, 1], [4, 1], [5, 1]]);
   for (const preferences of preferenceObjects || []) {
     if (preferences?.randomCardSize) continue;
@@ -1326,25 +1644,20 @@ function resolveCardSize(preferenceObjects) {
       sizeWeights.set(size, sizeWeights.get(size) + 1);
     }
   }
-  let bestSize = 5;
-  let bestWeight = -1;
-  for (const [size, weight] of sizeWeights.entries()) {
-    if (weight > bestWeight) {
-      bestSize = size;
-      bestWeight = weight;
-    }
-  }
-  return `${bestSize}x${bestSize}`;
+  const sizes = Array.from(sizeWeights.keys());
+  const weights = sizes.map((size) => Number(sizeWeights.get(size) || 0));
+  const chosen = Number(weightedChoice(rng, sizes, weights, 5) || 5);
+  return `${chosen}x${chosen}`;
 }
 
-function resolveCardSizeValue(preferenceObjects) {
-  const sizeText = resolveCardSize(preferenceObjects);
+function resolveCardSizeValue(rng, preferenceObjects) {
+  const sizeText = resolveCardSize(rng, preferenceObjects);
   const parsed = Number(String(sizeText).split("x")[0] || 5);
   return Number.isFinite(parsed) ? parsed : 5;
 }
 
-function resolveWorldType(preferenceObjects) {
-  return Number(resolveEnumPreference(preferenceObjects, "worldTypeMode", ["0", "1", "2", "3", "4"], "0") || 0);
+function resolveWorldType(rng, preferenceObjects) {
+  return Number(resolveEnumPreference(rng, preferenceObjects, "worldTypeMode", ["0", "1", "2", "3", "4"], "0") || 0);
 }
 
 function resolveWorldTypeLabel(worldTypeMode) {
@@ -1357,8 +1670,38 @@ function resolveWorldTypeLabel(worldTypeMode) {
   })[Number(worldTypeMode || 0)] || "Normal";
 }
 
-function resolvePrelitPortals(preferenceObjects) {
-  return Number(resolveEnumPreference(preferenceObjects, "prelitPortalsMode", ["0", "1", "2", "3"], "0") || 0);
+function resolvePrelitPortals(rng, preferenceObjects) {
+  return Number(resolveEnumPreference(rng, preferenceObjects, "prelitPortalsMode", ["0", "1", "2", "3"], "0") || 0);
+}
+
+function createSeededRandom(seed) {
+  let state = Number(seed || 1) >>> 0;
+  if (state === 0) state = 1;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function weightedBoolean(rng, trueWeight, falseWeight, fallback) {
+  const total = Math.max(0, Number(trueWeight || 0)) + Math.max(0, Number(falseWeight || 0));
+  if (total <= 0) return Boolean(fallback);
+  return (rng ? rng() : Math.random()) * total < Math.max(0, Number(trueWeight || 0));
+}
+
+function weightedChoice(rng, options, weights, fallback) {
+  const normalizedOptions = Array.isArray(options) ? options : [];
+  const normalizedWeights = Array.isArray(weights) ? weights : [];
+  const total = normalizedWeights.reduce((sum, weight) => sum + Math.max(0, Number(weight || 0)), 0);
+  if (!normalizedOptions.length || total <= 0) return fallback;
+  let roll = (rng ? rng() : Math.random()) * total;
+  for (let i = 0; i < normalizedOptions.length; i++) {
+    roll -= Math.max(0, Number(normalizedWeights[i] || 0));
+    if (roll < 0) {
+      return normalizedOptions[i];
+    }
+  }
+  return normalizedOptions[normalizedOptions.length - 1] || fallback;
 }
 
 function resolvePrelitLabel(mode) {
