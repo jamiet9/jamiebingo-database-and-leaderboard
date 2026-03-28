@@ -551,6 +551,7 @@ async function loadActiveMatchForPlayer(env, playerName) {
     queueMode: normalizeQueueMode(row.queueMode),
     state: String(row.state || "pending"),
     targetPlayerCount: Number(row.targetPlayerCount || 0),
+    createdAtEpochSeconds: Number(row.createdAtEpochSeconds || 0),
     startAfterEpochSeconds: Number(row.startAfterEpochSeconds || 0),
     settingsLines: parseJsonArray(tryParseMatchPayload(row.matchPayloadJson)?.settingsLines),
     definitionJson: String(row.matchPayloadJson || "{}"),
