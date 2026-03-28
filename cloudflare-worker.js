@@ -971,6 +971,19 @@ async function buildOnlineQueueSnapshot(env, playerName, status = "idle", messag
   };
 }
 
+function isTerminalMatchState(state) {
+  const normalized = String(state || "").trim().toLowerCase();
+  return normalized === "finished" || normalized === "drawn";
+}
+
+function isPreStartState(state) {
+  const normalized = String(state || "").trim().toLowerCase();
+  return normalized === "pending_ready"
+    || normalized === "revealing"
+    || normalized === "ready_to_start"
+    || normalized === "launching";
+}
+
 async function loadActiveMatchForPlayer(env, playerName) {
   const row = await env.DB.prepare(`
     SELECT
@@ -980,6 +993,7 @@ async function loadActiveMatchForPlayer(env, playerName) {
       m.target_player_count AS targetPlayerCount,
       m.created_at_epoch_seconds AS createdAtEpochSeconds,
       m.start_after_epoch_seconds AS startAfterEpochSeconds,
+      m.updated_at_epoch_seconds AS updatedAtEpochSeconds,
       m.match_payload_json AS matchPayloadJson
     FROM online_match_players p
     JOIN online_matches m ON m.match_id = p.match_id
@@ -987,8 +1001,16 @@ async function loadActiveMatchForPlayer(env, playerName) {
     LIMIT 1
   `).bind(playerName).first();
   if (!row) return null;
+  const now = Math.floor(Date.now() / 1000);
   const state = String(row.state || "pending").trim().toLowerCase();
-  if (state === "finished" || state === "drawn") {
+  const updatedAt = Number(row.updatedAtEpochSeconds || 0);
+  const createdAt = Number(row.createdAtEpochSeconds || 0);
+  const staleAnchor = Math.max(updatedAt, createdAt);
+  if (isTerminalMatchState(state)) {
+    await clearActiveMatch(env, row.matchId);
+    return null;
+  }
+  if (isPreStartState(state) && staleAnchor > 0 && now >= staleAnchor + 180) {
     await clearActiveMatch(env, row.matchId);
     return null;
   }
