@@ -480,6 +480,7 @@ export default {
         SET updated_at_epoch_seconds = ?
         WHERE match_id = ?
       `).bind(now, matchId).run();
+      await appendSystemMatchChat(env, matchId, `${playerName} voted for a draw.`);
       return Response.json({ status: "ok" }, {
         headers: corsHeaders()
       });
