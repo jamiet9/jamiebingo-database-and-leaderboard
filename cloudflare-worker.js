@@ -301,6 +301,11 @@ export default {
         completedSlotIdsJson: JSON.stringify(Array.isArray(body?.completedSlotIds) ? body.completedSlotIds : []),
         updatedAtEpochSeconds: now
       });
+      await env.DB.prepare(`
+        UPDATE online_match_players
+        SET disconnect_notice_epoch_seconds = 0
+        WHERE match_id = ? AND player_name = ?
+      `).bind(matchId, playerName).run();
       await upsertOnlineSlotClaims(env, {
         matchId,
         playerName,
@@ -727,15 +732,22 @@ async function ensureOnlineQueueTable(env) {
     `).run();
   } catch {
   }
-  try {
-    await env.DB.prepare(`
-      ALTER TABLE online_matches
-      ADD COLUMN match_payload_json TEXT NOT NULL DEFAULT '{}'
-    `).run();
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE online_matches
+        ADD COLUMN match_payload_json TEXT NOT NULL DEFAULT '{}'
+      `).run();
+      } catch {
+      }
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE online_match_players
+        ADD COLUMN disconnect_notice_epoch_seconds INTEGER NOT NULL DEFAULT 0
+      `).run();
     } catch {
     }
-    await env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS online_match_runtime_states (
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_runtime_states (
         match_id TEXT NOT NULL,
         player_name TEXT NOT NULL,
         score INTEGER NOT NULL DEFAULT 0,
@@ -1296,7 +1308,9 @@ async function autoForfeitStalePlayers(env, matchId, nowEpochSeconds) {
   const { results } = await env.DB.prepare(`
     SELECT
       p.player_name AS playerName,
-      COALESCE(r.updated_at_epoch_seconds, 0) AS updatedAtEpochSeconds
+      COALESCE(r.updated_at_epoch_seconds, 0) AS updatedAtEpochSeconds,
+      COALESCE(p.joined_at_epoch_seconds, 0) AS joinedAtEpochSeconds,
+      COALESCE(p.disconnect_notice_epoch_seconds, 0) AS disconnectNoticeEpochSeconds
     FROM online_match_players p
     LEFT JOIN online_match_runtime_states r
       ON r.match_id = p.match_id AND r.player_name = p.player_name
@@ -1308,7 +1322,19 @@ async function autoForfeitStalePlayers(env, matchId, nowEpochSeconds) {
   for (const row of results || []) {
     const playerName = normalizePlayerName(row?.playerName);
     const updatedAt = Number(row?.updatedAtEpochSeconds || 0);
-    if (!playerName || updatedAt <= 0 || nowEpochSeconds < updatedAt + 120) continue;
+    const joinedAt = Number(row?.joinedAtEpochSeconds || 0);
+    const disconnectNoticeAt = Number(row?.disconnectNoticeEpochSeconds || 0);
+    const lastSeenAt = Math.max(updatedAt, joinedAt);
+    if (!playerName || lastSeenAt <= 0) continue;
+    if (disconnectNoticeAt <= 0 && nowEpochSeconds >= lastSeenAt + 10) {
+      await env.DB.prepare(`
+        UPDATE online_match_players
+        SET disconnect_notice_epoch_seconds = ?
+        WHERE match_id = ? AND player_name = ?
+      `).bind(nowEpochSeconds, matchId, playerName).run();
+      await appendSystemMatchChat(env, matchId, `${playerName} disconnected. Reconnect within 2 minutes or forfeit.`);
+    }
+    if (nowEpochSeconds < lastSeenAt + 120) continue;
     await env.DB.prepare(`
       INSERT INTO online_match_forfeits (
         match_id,
@@ -1792,18 +1818,29 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
 }
 
 function resolveTogglePreference(rng, preferenceObjects, key, defaultValue) {
+  const choices = [];
   let onWeight = 1;
   let offWeight = 1;
   for (const preferences of preferenceObjects || []) {
     const value = String(preferences?.[key] || "").trim().toUpperCase();
-    if (value === "ON") onWeight += 1;
-    if (value === "OFF") offWeight += 1;
+    if (value === "ON") {
+      onWeight += 1;
+      choices.push("ON");
+    }
+    if (value === "OFF") {
+      offWeight += 1;
+      choices.push("OFF");
+    }
+  }
+  if (choices.length > 0 && choices.every((choice) => choice === choices[0])) {
+    return choices[0] === "ON";
   }
   if (onWeight <= 0 && offWeight <= 0) return defaultValue;
   return weightedBoolean(rng, onWeight, offWeight, defaultValue);
 }
 
 function resolveEnumPreference(rng, preferenceObjects, key, options, defaultValue) {
+  const explicitChoices = [];
   const weights = new Map();
   for (const option of options) {
     weights.set(String(option).toUpperCase(), 1);
@@ -1813,7 +1850,11 @@ function resolveEnumPreference(rng, preferenceObjects, key, options, defaultValu
     if (value === "" || value === "RANDOM") continue;
     if (weights.has(value)) {
       weights.set(value, weights.get(value) + 1);
+      explicitChoices.push(value);
     }
+  }
+  if (explicitChoices.length > 0 && explicitChoices.every((choice) => choice === explicitChoices[0])) {
+    return explicitChoices[0];
   }
   return weightedChoice(
     rng,
@@ -1824,13 +1865,19 @@ function resolveEnumPreference(rng, preferenceObjects, key, options, defaultValu
 }
 
 function resolveCardSize(rng, preferenceObjects) {
+  const explicitChoices = [];
   const sizeWeights = new Map([[2, 1], [3, 1], [4, 1], [5, 1]]);
   for (const preferences of preferenceObjects || []) {
     if (preferences?.randomCardSize) continue;
     const size = Number(preferences?.cardSize || 0);
     if (sizeWeights.has(size)) {
       sizeWeights.set(size, sizeWeights.get(size) + 1);
+      explicitChoices.push(size);
     }
+  }
+  if (explicitChoices.length > 0 && explicitChoices.every((choice) => choice === explicitChoices[0])) {
+    const unanimous = Number(explicitChoices[0] || 5);
+    return `${unanimous}x${unanimous}`;
   }
   const sizes = Array.from(sizeWeights.keys());
   const weights = sizes.map((size) => Number(sizeWeights.get(size) || 0));
@@ -1845,14 +1892,13 @@ function resolveCardSizeValue(rng, preferenceObjects) {
 }
 
 function resolveWorldType(rng, preferenceObjects) {
-  return Number(resolveEnumPreference(rng, preferenceObjects, "worldTypeMode", ["0", "1", "2", "3", "4"], "0") || 0);
+  return Number(resolveEnumPreference(rng, preferenceObjects, "worldTypeMode", ["0", "1", "3", "4"], "0") || 0);
 }
 
 function resolveWorldTypeLabel(worldTypeMode) {
   return ({
     0: "Normal",
     1: "Amplified",
-    2: "Superflat",
     3: "Single Biome",
     4: "Custom Biome Size"
   })[Number(worldTypeMode || 0)] || "Normal";
