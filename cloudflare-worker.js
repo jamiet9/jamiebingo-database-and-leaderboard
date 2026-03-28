@@ -301,6 +301,28 @@ export default {
         completedSlotIdsJson: JSON.stringify(Array.isArray(body?.completedSlotIds) ? body.completedSlotIds : []),
         updatedAtEpochSeconds: now
       });
+      await upsertOnlineSlotClaims(env, {
+        matchId,
+        playerName,
+        teamIndex: Number(sender.teamIndex || 0),
+        completedSlotIds: Array.isArray(body?.completedSlotIds) ? body.completedSlotIds : [],
+        claimedAtEpochSeconds: now
+      });
+      await upsertOnlineTeamMineState(env, {
+        matchId,
+        teamIndex: Number(sender.teamIndex || 0),
+        active: Boolean(body?.mineSnapshot?.active),
+        sourceQuestIdsJson: JSON.stringify(Array.isArray(body?.mineSnapshot?.sourceQuestIds) ? body.mineSnapshot.sourceQuestIds : []),
+        displayNamesJson: JSON.stringify(Array.isArray(body?.mineSnapshot?.displayNames) ? body.mineSnapshot.displayNames : []),
+        triggeredQuestId: normalizeText(body?.mineSnapshot?.triggeredQuestId || ""),
+        deadlineEpochSeconds: Number(body?.mineSnapshot?.remainingSeconds) >= 0 ? now + Math.max(0, Number(body?.mineSnapshot?.remainingSeconds || 0)) : 0,
+        progressQuestId: normalizeText(body?.mineSnapshot?.progressQuestId || ""),
+        progressValue: Math.max(0, Number(body?.mineSnapshot?.progress || 0)),
+        progressMax: Math.max(0, Number(body?.mineSnapshot?.progressMax || 0)),
+        defuseQuestId: normalizeText(body?.mineSnapshot?.defuseQuestId || ""),
+        defuseDisplayName: normalizeText(body?.mineSnapshot?.defuseDisplayName || ""),
+        updatedAtEpochSeconds: now
+      });
       if (Array.isArray(body?.teamChestSlots)) {
         await upsertOnlineTeamChestState(env, {
           matchId,
@@ -745,17 +767,45 @@ async function ensureOnlineQueueTable(env) {
         published_at_epoch_seconds INTEGER NOT NULL
       )
     `).run();
-    await env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS online_match_team_chests (
-        match_id TEXT NOT NULL,
-        team_index INTEGER NOT NULL,
-        chest_slots_json TEXT NOT NULL DEFAULT '[]',
-        updated_at_epoch_seconds INTEGER NOT NULL,
-        PRIMARY KEY (match_id, team_index)
-      )
-    `).run();
-    await env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS online_match_draw_votes (
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_team_chests (
+          match_id TEXT NOT NULL,
+          team_index INTEGER NOT NULL,
+          chest_slots_json TEXT NOT NULL DEFAULT '[]',
+          updated_at_epoch_seconds INTEGER NOT NULL,
+          PRIMARY KEY (match_id, team_index)
+        )
+      `).run();
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_slot_claims (
+          match_id TEXT NOT NULL,
+          slot_id TEXT NOT NULL,
+          team_index INTEGER NOT NULL DEFAULT 0,
+          claimed_by_player_name TEXT NOT NULL,
+          claimed_at_epoch_seconds INTEGER NOT NULL,
+          PRIMARY KEY (match_id, slot_id)
+        )
+      `).run();
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_team_mines (
+          match_id TEXT NOT NULL,
+          team_index INTEGER NOT NULL,
+          active INTEGER NOT NULL DEFAULT 0,
+          source_quest_ids_json TEXT NOT NULL DEFAULT '[]',
+          display_names_json TEXT NOT NULL DEFAULT '[]',
+          triggered_quest_id TEXT NOT NULL DEFAULT '',
+          deadline_epoch_seconds INTEGER NOT NULL DEFAULT 0,
+          progress_quest_id TEXT NOT NULL DEFAULT '',
+          progress_value INTEGER NOT NULL DEFAULT 0,
+          progress_max INTEGER NOT NULL DEFAULT 0,
+          defuse_quest_id TEXT NOT NULL DEFAULT '',
+          defuse_display_name TEXT NOT NULL DEFAULT '',
+          updated_at_epoch_seconds INTEGER NOT NULL,
+          PRIMARY KEY (match_id, team_index)
+        )
+      `).run();
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_draw_votes (
         match_id TEXT NOT NULL,
         player_name TEXT NOT NULL,
         voted_at_epoch_seconds INTEGER NOT NULL,
@@ -821,11 +871,23 @@ async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
       WHERE updated_at_epoch_seconds < ?
     )
   `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
-  await env.DB.prepare(`
-    DELETE FROM online_match_team_chests
-    WHERE updated_at_epoch_seconds < ?
-  `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
-}
+    await env.DB.prepare(`
+      DELETE FROM online_match_team_chests
+      WHERE updated_at_epoch_seconds < ?
+    `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+    await env.DB.prepare(`
+      DELETE FROM online_match_slot_claims
+      WHERE match_id IN (
+        SELECT match_id
+        FROM online_matches
+        WHERE updated_at_epoch_seconds < ?
+      )
+    `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+    await env.DB.prepare(`
+      DELETE FROM online_match_team_mines
+      WHERE updated_at_epoch_seconds < ?
+    `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+  }
 
 async function buildOnlineQueueSnapshot(env, playerName, status = "idle", message = "") {
   const counts = await loadOnlineQueueCounts(env);
@@ -1042,6 +1104,14 @@ async function clearActiveMatch(env, matchId) {
     WHERE match_id = ?
   `).bind(matchId).run();
   await env.DB.prepare(`
+    DELETE FROM online_match_slot_claims
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_team_mines
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
     DELETE FROM online_match_forfeits
     WHERE match_id = ?
   `).bind(matchId).run();
@@ -1121,7 +1191,81 @@ async function upsertOnlineTeamChestState(env, state) {
   `).bind(
     state.matchId,
     Number(state.teamIndex || 0),
-    String(state.chestSlotsJson || "[]"),
+      String(state.chestSlotsJson || "[]"),
+      Number(state.updatedAtEpochSeconds || 0)
+    ).run();
+  }
+
+async function upsertOnlineSlotClaims(env, state) {
+  const matchId = normalizeText(state?.matchId);
+  const playerName = normalizePlayerName(state?.playerName);
+  const teamIndex = Math.max(0, Number(state?.teamIndex || 0));
+  const claimedAtEpochSeconds = Number(state?.claimedAtEpochSeconds || 0);
+  const completedSlotIds = Array.isArray(state?.completedSlotIds) ? state.completedSlotIds : [];
+  for (const rawSlotId of completedSlotIds) {
+    const slotId = normalizeChatMessage(rawSlotId);
+    if (!matchId || !playerName || !slotId) continue;
+    await env.DB.prepare(`
+      INSERT INTO online_match_slot_claims (
+        match_id,
+        slot_id,
+        team_index,
+        claimed_by_player_name,
+        claimed_at_epoch_seconds
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(match_id, slot_id) DO NOTHING
+    `).bind(
+      matchId,
+      slotId,
+      teamIndex,
+      playerName,
+      claimedAtEpochSeconds
+    ).run();
+    }
+  }
+
+async function upsertOnlineTeamMineState(env, state) {
+  await env.DB.prepare(`
+    INSERT INTO online_match_team_mines (
+      match_id,
+      team_index,
+      active,
+      source_quest_ids_json,
+      display_names_json,
+      triggered_quest_id,
+      deadline_epoch_seconds,
+      progress_quest_id,
+      progress_value,
+      progress_max,
+      defuse_quest_id,
+      defuse_display_name,
+      updated_at_epoch_seconds
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(match_id, team_index) DO UPDATE SET
+      active = excluded.active,
+      source_quest_ids_json = excluded.source_quest_ids_json,
+      display_names_json = excluded.display_names_json,
+      triggered_quest_id = excluded.triggered_quest_id,
+      deadline_epoch_seconds = excluded.deadline_epoch_seconds,
+      progress_quest_id = excluded.progress_quest_id,
+      progress_value = excluded.progress_value,
+      progress_max = excluded.progress_max,
+      defuse_quest_id = excluded.defuse_quest_id,
+      defuse_display_name = excluded.defuse_display_name,
+      updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
+  `).bind(
+    state.matchId,
+    Number(state.teamIndex || 0),
+    state.active ? 1 : 0,
+    String(state.sourceQuestIdsJson || "[]"),
+    String(state.displayNamesJson || "[]"),
+    normalizeText(state.triggeredQuestId || ""),
+    Number(state.deadlineEpochSeconds || 0),
+    normalizeText(state.progressQuestId || ""),
+    Math.max(0, Number(state.progressValue || 0)),
+    Math.max(0, Number(state.progressMax || 0)),
+    normalizeText(state.defuseQuestId || ""),
+    normalizeText(state.defuseDisplayName || ""),
     Number(state.updatedAtEpochSeconds || 0)
   ).run();
 }
@@ -1230,6 +1374,13 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     ORDER BY message_id ASC
     LIMIT 100
   `).bind(matchId, Math.max(0, Number(chatCursor || 0))).all();
+  const slotClaimsResult = await env.DB.prepare(`
+    SELECT
+      slot_id AS slotId,
+      team_index AS teamIndex
+    FROM online_match_slot_claims
+    WHERE match_id = ?
+  `).bind(matchId).all();
   const forfeitedPlayers = new Set((forfeitsResult.results || []).map((row) => normalizePlayerName(row?.playerName)).filter(Boolean));
   const drawVoters = new Set((drawVotesResult.results || []).map((row) => normalizePlayerName(row?.playerName)).filter(Boolean));
   const players = (playersResult.results || []).map((row) => ({
@@ -1254,6 +1405,28 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     WHERE match_id = ? AND team_index = ?
     LIMIT 1
   `).bind(matchId, viewerTeamIndex).first();
+  const teamMineRow = await env.DB.prepare(`
+    SELECT
+      active AS active,
+      source_quest_ids_json AS sourceQuestIdsJson,
+      display_names_json AS displayNamesJson,
+      triggered_quest_id AS triggeredQuestId,
+      deadline_epoch_seconds AS deadlineEpochSeconds,
+      progress_quest_id AS progressQuestId,
+      progress_value AS progressValue,
+      progress_max AS progressMax,
+      defuse_quest_id AS defuseQuestId,
+      defuse_display_name AS defuseDisplayName
+    FROM online_match_team_mines
+    WHERE match_id = ? AND team_index = ?
+    LIMIT 1
+  `).bind(matchId, viewerTeamIndex).first();
+  const slotOwnershipTeamIndices = {};
+  for (const row of slotClaimsResult.results || []) {
+    const slotId = normalizeChatMessage(row?.slotId);
+    if (!slotId) continue;
+    slotOwnershipTeamIndices[slotId] = Math.max(0, Number(row?.teamIndex || 0));
+  }
   const outcome = computeOnlineMatchOutcome(tryParseMatchPayload(matchRow?.matchPayloadJson), players, drawVoters);
   if (outcome.resultState !== "active") {
     await env.DB.prepare(`
@@ -1274,7 +1447,22 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     resultMessage: outcome.resultMessage,
     winnerPlayerNames: outcome.winnerPlayerNames,
     teamCompletedSlotIds,
+    slotOwnershipTeamIndices,
     teamChestSlots: parseJsonArray(teamChestRow?.chestSlotsJson),
+    mineState: {
+      active: Number(teamMineRow?.active || 0) !== 0,
+      sourceQuestIds: parseJsonArray(teamMineRow?.sourceQuestIdsJson),
+      displayNames: parseJsonArray(teamMineRow?.displayNamesJson),
+      triggeredQuestId: normalizeText(teamMineRow?.triggeredQuestId || ""),
+      remainingSeconds: Number(teamMineRow?.deadlineEpochSeconds || 0) > 0
+        ? Math.max(0, Number(teamMineRow?.deadlineEpochSeconds || 0) - Math.floor(Date.now() / 1000))
+        : -1,
+      progressQuestId: normalizeText(teamMineRow?.progressQuestId || ""),
+      progress: Math.max(0, Number(teamMineRow?.progressValue || 0)),
+      progressMax: Math.max(0, Number(teamMineRow?.progressMax || 0)),
+      defuseQuestId: normalizeText(teamMineRow?.defuseQuestId || ""),
+      defuseDisplayName: normalizeText(teamMineRow?.defuseDisplayName || "")
+    },
     chatMessages: (chatResult.results || [])
       .filter((row) => {
         const channel = normalizeOnlineChatChannel(row.channel);
