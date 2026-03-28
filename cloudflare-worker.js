@@ -110,7 +110,11 @@ export default {
       if (existingMatch?.matchId) {
         await maybeAdvanceMatchState(env, existingMatch.matchId, now);
       }
-      const refreshedMatch = playerName ? await loadActiveMatchForPlayer(env, playerName) : null;
+      let refreshedMatch = playerName ? await loadActiveMatchForPlayer(env, playerName) : null;
+      if (refreshedMatch?.matchId && refreshedMatch.state === "ready_to_start") {
+        await clearActiveMatch(env, refreshedMatch.matchId);
+        refreshedMatch = null;
+      }
       if (refreshedMatch) {
         return Response.json(await buildOnlineQueueSnapshot(env, playerName, "matched", "Match already found"), {
           headers: corsHeaders()
@@ -242,6 +246,30 @@ export default {
       await dissolvePendingMatch(env, activeMatch.matchId, playerName, now);
       const snapshot = await buildOnlineQueueSnapshot(env, playerName, "idle", "Left match");
       return Response.json(snapshot, {
+        headers: corsHeaders()
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/online/match/consume") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      if (!playerName) {
+        return Response.json({
+          counts: await loadOnlineQueueCounts(env),
+          activeQueue: null,
+          activeMatch: null,
+          status: "error",
+          message: "Player name is required"
+        }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const activeMatch = await loadActiveMatchForPlayer(env, playerName);
+      if (activeMatch?.matchId) {
+        await clearActiveMatch(env, activeMatch.matchId);
+      }
+      return Response.json(await buildOnlineQueueSnapshot(env, playerName, "idle", "Match consumed"), {
         headers: corsHeaders()
       });
     }
@@ -620,6 +648,18 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
       WHERE match_id = ?
     `).bind(matchId).run();
   }
+}
+
+async function clearActiveMatch(env, matchId) {
+  if (!matchId) return;
+  await env.DB.prepare(`
+    DELETE FROM online_match_players
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
+    DELETE FROM online_matches
+    WHERE match_id = ?
+  `).bind(matchId).run();
 }
 
 async function computeRevealDurationSeconds(env, matchId) {
