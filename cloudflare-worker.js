@@ -328,6 +328,26 @@ export default {
         defuseDisplayName: normalizeText(body?.mineSnapshot?.defuseDisplayName || ""),
         updatedAtEpochSeconds: now
       });
+      const authority = await env.DB.prepare(`
+        SELECT player_name AS playerName
+        FROM online_match_players
+        WHERE match_id = ?
+        ORDER BY joined_at_epoch_seconds ASC, player_name ASC
+        LIMIT 1
+      `).bind(matchId).first();
+      if (normalizePlayerName(authority?.playerName) === playerName) {
+        await upsertOnlinePowerState(env, {
+          matchId,
+          active: Boolean(body?.powerSlotSnapshot?.active),
+          slotId: normalizeText(body?.powerSlotSnapshot?.slotId || ""),
+          displayName: normalizeText(body?.powerSlotSnapshot?.displayName || ""),
+          deadlineEpochSeconds: Number(body?.powerSlotSnapshot?.remainingSeconds) >= 0
+            ? now + Math.max(0, Number(body?.powerSlotSnapshot?.remainingSeconds || 0))
+            : 0,
+          claimed: Boolean(body?.powerSlotSnapshot?.claimed),
+          updatedAtEpochSeconds: now
+        });
+      }
       if (Array.isArray(body?.teamChestSlots)) {
         await upsertOnlineTeamChestState(env, {
           matchId,
@@ -817,6 +837,17 @@ async function ensureOnlineQueueTable(env) {
         )
       `).run();
       await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_power_state (
+          match_id TEXT PRIMARY KEY,
+          active INTEGER NOT NULL DEFAULT 0,
+          slot_id TEXT NOT NULL DEFAULT '',
+          display_name TEXT NOT NULL DEFAULT '',
+          deadline_epoch_seconds INTEGER NOT NULL DEFAULT 0,
+          claimed INTEGER NOT NULL DEFAULT 0,
+          updated_at_epoch_seconds INTEGER NOT NULL
+        )
+      `).run();
+      await env.DB.prepare(`
         CREATE TABLE IF NOT EXISTS online_match_draw_votes (
         match_id TEXT NOT NULL,
         player_name TEXT NOT NULL,
@@ -877,6 +908,14 @@ async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
   `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
   await env.DB.prepare(`
     DELETE FROM online_match_forfeits
+    WHERE match_id IN (
+      SELECT match_id
+      FROM online_matches
+      WHERE updated_at_epoch_seconds < ?
+    )
+  `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_power_state
     WHERE match_id IN (
       SELECT match_id
       FROM online_matches
@@ -1124,6 +1163,10 @@ async function clearActiveMatch(env, matchId) {
     WHERE match_id = ?
   `).bind(matchId).run();
   await env.DB.prepare(`
+    DELETE FROM online_match_power_state
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
     DELETE FROM online_match_forfeits
     WHERE match_id = ?
   `).bind(matchId).run();
@@ -1284,6 +1327,35 @@ async function upsertOnlineTeamMineState(env, state) {
   ).run();
 }
 
+async function upsertOnlinePowerState(env, state) {
+  await env.DB.prepare(`
+    INSERT INTO online_match_power_state (
+      match_id,
+      active,
+      slot_id,
+      display_name,
+      deadline_epoch_seconds,
+      claimed,
+      updated_at_epoch_seconds
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(match_id) DO UPDATE SET
+      active = excluded.active,
+      slot_id = excluded.slot_id,
+      display_name = excluded.display_name,
+      deadline_epoch_seconds = excluded.deadline_epoch_seconds,
+      claimed = excluded.claimed,
+      updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
+  `).bind(
+    state.matchId,
+    state.active ? 1 : 0,
+    normalizeText(state.slotId || ""),
+    normalizeText(state.displayName || ""),
+    Number(state.deadlineEpochSeconds || 0),
+    state.claimed ? 1 : 0,
+    Number(state.updatedAtEpochSeconds || 0)
+  ).run();
+}
+
 async function appendSystemMatchChat(env, matchId, message) {
   const text = normalizeChatMessage(message);
   if (!matchId || !text) return;
@@ -1307,6 +1379,16 @@ async function appendSystemMatchChat(env, matchId, message) {
 }
 
 async function autoForfeitStalePlayers(env, matchId, nowEpochSeconds) {
+  const matchRow = await env.DB.prepare(`
+    SELECT state AS state
+    FROM online_matches
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(matchId).first();
+  const matchState = normalizeText(matchRow?.state || "").toLowerCase();
+  if (matchState !== "active") {
+    return;
+  }
   const { results } = await env.DB.prepare(`
     SELECT
       p.player_name AS playerName,
@@ -1324,9 +1406,8 @@ async function autoForfeitStalePlayers(env, matchId, nowEpochSeconds) {
   for (const row of results || []) {
     const playerName = normalizePlayerName(row?.playerName);
     const updatedAt = Number(row?.updatedAtEpochSeconds || 0);
-    const joinedAt = Number(row?.joinedAtEpochSeconds || 0);
     const disconnectNoticeAt = Number(row?.disconnectNoticeEpochSeconds || 0);
-    const lastSeenAt = Math.max(updatedAt, joinedAt);
+    const lastSeenAt = updatedAt;
     if (!playerName || lastSeenAt <= 0) continue;
     if (disconnectNoticeAt <= 0 && nowEpochSeconds >= lastSeenAt + 10) {
       await env.DB.prepare(`
@@ -1449,6 +1530,17 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     WHERE match_id = ? AND team_index = ?
     LIMIT 1
   `).bind(matchId, viewerTeamIndex).first();
+  const powerStateRow = await env.DB.prepare(`
+    SELECT
+      active AS active,
+      slot_id AS slotId,
+      display_name AS displayName,
+      deadline_epoch_seconds AS deadlineEpochSeconds,
+      claimed AS claimed
+    FROM online_match_power_state
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(matchId).first();
   const slotOwnershipTeamIndices = {};
   for (const row of slotClaimsResult.results || []) {
     const slotId = normalizeChatMessage(row?.slotId);
@@ -1490,6 +1582,15 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
       progressMax: Math.max(0, Number(teamMineRow?.progressMax || 0)),
       defuseQuestId: normalizeText(teamMineRow?.defuseQuestId || ""),
       defuseDisplayName: normalizeText(teamMineRow?.defuseDisplayName || "")
+    },
+    powerSlotState: {
+      active: Number(powerStateRow?.active || 0) !== 0,
+      slotId: normalizeText(powerStateRow?.slotId || ""),
+      displayName: normalizeText(powerStateRow?.displayName || ""),
+      remainingSeconds: Number(powerStateRow?.deadlineEpochSeconds || 0) > 0
+        ? Math.max(0, Number(powerStateRow?.deadlineEpochSeconds || 0) - Math.floor(Date.now() / 1000))
+        : -1,
+      claimed: Number(powerStateRow?.claimed || 0) !== 0
     },
     chatMessages: (chatResult.results || [])
       .filter((row) => {
@@ -1901,8 +2002,8 @@ function resolveWorldTypeLabel(worldTypeMode) {
   return ({
     0: "Normal",
     1: "Amplified",
-    3: "Single Biome",
-    4: "Custom Biome Size"
+    3: "Custom Biome Size",
+    4: "Single Biome"
   })[Number(worldTypeMode || 0)] || "Normal";
 }
 
