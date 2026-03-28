@@ -553,6 +553,7 @@ async function loadActiveMatchForPlayer(env, playerName) {
     targetPlayerCount: Number(row.targetPlayerCount || 0),
     startAfterEpochSeconds: Number(row.startAfterEpochSeconds || 0),
     settingsLines: parseJsonArray(tryParseMatchPayload(row.matchPayloadJson)?.settingsLines),
+    definitionJson: String(row.matchPayloadJson || "{}"),
     playerNames,
     readyPlayerNames
   };
@@ -602,6 +603,18 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
       SET state = ?, updated_at_epoch_seconds = ?
       WHERE match_id = ?
     `).bind("ready_to_start", now, matchId).run();
+    return;
+  }
+
+  if (currentState === "ready_to_start" && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 10) {
+    await env.DB.prepare(`
+      DELETE FROM online_match_players
+      WHERE match_id = ?
+    `).bind(matchId).run();
+    await env.DB.prepare(`
+      DELETE FROM online_matches
+      WHERE match_id = ?
+    `).bind(matchId).run();
   }
 }
 
@@ -785,37 +798,79 @@ function tryParseMatchPayload(value) {
 function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   const controllerPreferences = queueRows.map((row) => row.controllerPreferences || {});
   const worldPreferences = queueRows.map((row) => row.worldPreferences || {});
+  const matchSeed = (nowEpochSeconds * 1000003) ^ Math.floor(Math.random() * 2147483647);
+  const win = resolveEnumPreference(controllerPreferences, "win", ["FULL", "LINE", "LOCKOUT", "RARITY", "BLIND", "HANGMAN", "GUNGAME", "GAMEGUN"], "FULL");
+  const cardSize = resolveCardSizeValue(controllerPreferences);
+  const cardDifficulty = resolveEnumPreference(controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal").toLowerCase();
+  const gameDifficulty = resolveEnumPreference(controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal").toLowerCase();
+  const effectsEnabled = resolveTogglePreference(controllerPreferences, "effects", false);
+  const rtpEnabled = resolveTogglePreference(controllerPreferences, "rtp", false);
+  const hostileMobsEnabled = resolveTogglePreference(controllerPreferences, "hostileMobs", true);
+  const hungerEnabled = resolveTogglePreference(controllerPreferences, "hunger", true);
+  const naturalRegenEnabled = resolveTogglePreference(controllerPreferences, "naturalRegen", true);
+  const keepInventoryEnabled = resolveTogglePreference(controllerPreferences, "keepInventory", false);
+  const hardcoreEnabled = resolveTogglePreference(controllerPreferences, "hardcore", false);
+  const teamChestEnabled = resolveTogglePreference(controllerPreferences, "teamChest", true);
+  const minesEnabled = resolveTogglePreference(controllerPreferences, "mines", false);
+  const powerSlotEnabled = resolveTogglePreference(controllerPreferences, "powerSlot", false);
+  const draftEnabled = resolveTogglePreference(controllerPreferences, "draft", false);
+  const rerollsEnabled = resolveTogglePreference(controllerPreferences, "rerolls", false);
+  const fakeRerollsEnabled = resolveTogglePreference(controllerPreferences, "fakeRerolls", false);
+  const worldTypeMode = resolveWorldType(worldPreferences);
+  const surfaceCaveBiomes = resolveTogglePreference(worldPreferences, "surfaceCaveBiomes", false);
+  const prelitPortalsMode = resolvePrelitPortals(worldPreferences);
   const settingsLines = [
-    `Mode: ${resolveEnumPreference(controllerPreferences, "win", ["FULL", "LINE", "LOCKOUT", "RARITY", "BLIND", "HANGMAN", "GUNGAME", "GAMEGUN"], "FULL")}`,
-    `Card Size: ${resolveCardSize(controllerPreferences)}`,
-    `Card Difficulty: ${resolveEnumPreference(controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal")}`,
-    `Game Difficulty: ${resolveEnumPreference(controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal")}`,
-    `Effects: ${resolveTogglePreference(controllerPreferences, "effects", false) ? "Enabled" : "Disabled"}`,
-    `RTP: ${resolveTogglePreference(controllerPreferences, "rtp", false) ? "Enabled" : "Disabled"}`,
-    `Hostile Mobs: ${resolveTogglePreference(controllerPreferences, "hostileMobs", true) ? "Enabled" : "Disabled"}`,
-    `Hunger: ${resolveTogglePreference(controllerPreferences, "hunger", true) ? "Enabled" : "Disabled"}`,
-    `Natural Regen: ${resolveTogglePreference(controllerPreferences, "naturalRegen", true) ? "On" : "Off"}`,
-    `Keep Inventory: ${resolveTogglePreference(controllerPreferences, "keepInventory", false) ? "Enabled" : "Disabled"}`,
-    `Hardcore: ${resolveTogglePreference(controllerPreferences, "hardcore", false) ? "Enabled" : "Disabled"}`,
-    `Team Chest: ${resolveTogglePreference(controllerPreferences, "teamChest", true) ? "Enabled" : "Disabled"}`,
-    `Mines: ${resolveTogglePreference(controllerPreferences, "mines", false) ? "Enabled" : "Disabled"}`,
-    `Power Slot: ${resolveTogglePreference(controllerPreferences, "powerSlot", false) ? "Enabled" : "Disabled"}`,
-    `Draft: ${resolveTogglePreference(controllerPreferences, "draft", false) ? "Enabled" : "Disabled"}`,
-    `Rerolls: ${resolveTogglePreference(controllerPreferences, "rerolls", false) ? "Enabled" : "Disabled"}`,
-    `Fake Rerolls: ${resolveTogglePreference(controllerPreferences, "fakeRerolls", false) ? "Enabled" : "Disabled"}`,
+    `Mode: ${win}`,
+    `Card Size: ${cardSize}x${cardSize}`,
+    `Card Difficulty: ${cardDifficulty}`,
+    `Game Difficulty: ${gameDifficulty}`,
+    `Effects: ${effectsEnabled ? "Enabled" : "Disabled"}`,
+    `RTP: ${rtpEnabled ? "Enabled" : "Disabled"}`,
+    `Hostile Mobs: ${hostileMobsEnabled ? "Enabled" : "Disabled"}`,
+    `Hunger: ${hungerEnabled ? "Enabled" : "Disabled"}`,
+    `Natural Regen: ${naturalRegenEnabled ? "On" : "Off"}`,
+    `Keep Inventory: ${keepInventoryEnabled ? "Enabled" : "Disabled"}`,
+    `Hardcore: ${hardcoreEnabled ? "Enabled" : "Disabled"}`,
+    `Team Chest: ${teamChestEnabled ? "Enabled" : "Disabled"}`,
+    `Mines: ${minesEnabled ? "Enabled" : "Disabled"}`,
+    `Power Slot: ${powerSlotEnabled ? "Enabled" : "Disabled"}`,
+    `Draft: ${draftEnabled ? "Enabled" : "Disabled"}`,
+    `Rerolls: ${rerollsEnabled ? "Enabled" : "Disabled"}`,
+    `Fake Rerolls: ${fakeRerollsEnabled ? "Enabled" : "Disabled"}`,
     "PVP: Disabled",
     "Adventure: Disabled",
     "Late Join: Disabled",
     "Team Sync: Enabled",
-    "Start Delay: 60s",
+    "Delay: 60s",
     "New Seed Every Game: Enabled",
-    `World Type: ${resolveWorldTypeLabel(resolveWorldType(worldPreferences))}`,
-    `World Surface Cave Biomes: ${resolveTogglePreference(worldPreferences, "surfaceCaveBiomes", false) ? "Enabled" : "Disabled"}`,
-    `Prelit Portals: ${resolvePrelitLabel(resolvePrelitPortals(worldPreferences))}`
+    `World Type: ${resolveWorldTypeLabel(worldTypeMode)}`,
+    `World Surface Cave Biomes: ${surfaceCaveBiomes ? "Enabled" : "Disabled"}`,
+    `Prelit Portals: ${resolvePrelitLabel(prelitPortalsMode)}`
   ];
   return {
     generatedAtEpochSeconds: nowEpochSeconds,
+    matchSeed,
     queueMode,
+    win,
+    cardSize,
+    cardDifficulty,
+    gameDifficulty,
+    effectsEnabled,
+    rtpEnabled,
+    hostileMobsEnabled,
+    hungerEnabled,
+    naturalRegenEnabled,
+    keepInventoryEnabled,
+    hardcoreEnabled,
+    teamChestEnabled,
+    minesEnabled,
+    powerSlotEnabled,
+    draftEnabled,
+    rerollsEnabled,
+    fakeRerollsEnabled,
+    worldTypeMode,
+    surfaceCaveBiomes,
+    prelitPortalsMode,
     settingsLines
   };
 }
@@ -875,6 +930,12 @@ function resolveCardSize(preferenceObjects) {
     }
   }
   return `${bestSize}x${bestSize}`;
+}
+
+function resolveCardSizeValue(preferenceObjects) {
+  const sizeText = resolveCardSize(preferenceObjects);
+  const parsed = Number(String(sizeText).split("x")[0] || 5);
+  return Number.isFinite(parsed) ? parsed : 5;
 }
 
 function resolveWorldType(preferenceObjects) {
