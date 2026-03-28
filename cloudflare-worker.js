@@ -1347,6 +1347,11 @@ function normalizePlayerName(value) {
   return text.slice(0, 64);
 }
 
+function normalizeText(value) {
+  const text = String(value || "").trim();
+  return text.length > 200000 ? text.slice(0, 200000) : text;
+}
+
 function normalizeQueueMode(value) {
   const text = String(value || "").trim().toUpperCase();
   return [
