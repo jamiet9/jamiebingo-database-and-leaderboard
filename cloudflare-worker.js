@@ -1414,7 +1414,7 @@ async function autoForfeitStalePlayers(env, matchId, nowEpochSeconds) {
     LIMIT 1
   `).bind(matchId).first();
   const matchState = normalizeText(matchRow?.state || "").toLowerCase();
-  if (matchState !== "active") {
+  if (matchState !== "active" && matchState !== "launching") {
     return;
   }
   const { results } = await env.DB.prepare(`
@@ -1434,8 +1434,9 @@ async function autoForfeitStalePlayers(env, matchId, nowEpochSeconds) {
   for (const row of results || []) {
     const playerName = normalizePlayerName(row?.playerName);
     const updatedAt = Number(row?.updatedAtEpochSeconds || 0);
+    const joinedAt = Number(row?.joinedAtEpochSeconds || 0);
     const disconnectNoticeAt = Number(row?.disconnectNoticeEpochSeconds || 0);
-    const lastSeenAt = updatedAt;
+    const lastSeenAt = Math.max(updatedAt, matchState === "launching" ? joinedAt : 0);
     if (!playerName || lastSeenAt <= 0) continue;
     if (disconnectNoticeAt <= 0 && nowEpochSeconds >= lastSeenAt + 10) {
       await env.DB.prepare(`
