@@ -83,7 +83,6 @@ export default {
       const body = await request.json();
       const playerName = normalizePlayerName(body?.playerName);
       const queueMode = normalizeQueueMode(body?.queueMode);
-      const existingMatch = playerName ? await loadActiveMatchForPlayer(env, playerName) : null;
       if (!playerName) {
         return Response.json({
           counts: await loadOnlineQueueCounts(env),
@@ -106,13 +105,17 @@ export default {
           headers: corsHeaders()
         });
       }
-      if (existingMatch) {
+      const now = Math.floor(Date.now() / 1000);
+      const existingMatch = playerName ? await loadActiveMatchForPlayer(env, playerName) : null;
+      if (existingMatch?.matchId) {
+        await maybeAdvanceMatchState(env, existingMatch.matchId, now);
+      }
+      const refreshedMatch = playerName ? await loadActiveMatchForPlayer(env, playerName) : null;
+      if (refreshedMatch) {
         return Response.json(await buildOnlineQueueSnapshot(env, playerName, "matched", "Match already found"), {
           headers: corsHeaders()
         });
       }
-
-      const now = Math.floor(Date.now() / 1000);
       await env.DB.prepare(`
         INSERT INTO online_queue_entries (
           player_name,
