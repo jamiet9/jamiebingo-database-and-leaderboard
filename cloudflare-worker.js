@@ -585,7 +585,8 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
 
   if (currentState === "pending_ready") {
     if (readyCount >= targetPlayerCount || now >= forceStartAt) {
-      const revealAt = now + 60;
+      const revealDuration = await computeRevealDurationSeconds(env, matchId);
+      const revealAt = now + revealDuration;
       await env.DB.prepare(`
         UPDATE online_matches
         SET state = ?, start_after_epoch_seconds = ?, updated_at_epoch_seconds = ?
@@ -601,6 +602,22 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
       SET state = ?, updated_at_epoch_seconds = ?
       WHERE match_id = ?
     `).bind("ready_to_start", now, matchId).run();
+  }
+}
+
+async function computeRevealDurationSeconds(env, matchId) {
+  try {
+    const row = await env.DB.prepare(`
+      SELECT match_payload_json AS matchPayloadJson
+      FROM online_matches
+      WHERE match_id = ?
+      LIMIT 1
+    `).bind(matchId).first();
+    const payload = tryParseMatchPayload(row?.matchPayloadJson);
+    const count = Array.isArray(payload?.settingsLines) ? payload.settingsLines.length : 0;
+    return Math.max(10, Math.min(30, count * 2));
+  } catch {
+    return 16;
   }
 }
 
