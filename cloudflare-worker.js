@@ -294,7 +294,42 @@ export default {
         completedSlotIdsJson: JSON.stringify(Array.isArray(body?.completedSlotIds) ? body.completedSlotIds : []),
         updatedAtEpochSeconds: now
       });
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET state = ?, updated_at_epoch_seconds = ?
+        WHERE match_id = ? AND state IN ('ready_to_start', 'active')
+      `).bind("active", now, matchId).run();
       return Response.json(await buildOnlineRuntimeSnapshot(env, matchId, Number(body?.chatCursor || 0), playerName), {
+        headers: corsHeaders()
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/online/match/publish-start") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      const settingsSeed = normalizeText(body?.settingsSeed);
+      const worldSeed = normalizeText(body?.worldSeed);
+      const cardSeed = normalizeText(body?.cardSeed);
+      if (!playerName || !matchId || !settingsSeed || !worldSeed || !cardSeed) {
+        return Response.json({ status: "error", message: "Start payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        INSERT INTO online_match_start_payloads (
+          match_id,
+          settings_seed,
+          world_seed,
+          card_seed,
+          published_by_player_name,
+          published_at_epoch_seconds
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(match_id) DO NOTHING
+      `).bind(matchId, settingsSeed, worldSeed, cardSeed, playerName, now).run();
+      return Response.json(await buildOnlineQueueSnapshot(env, playerName, "matched", "Start payload ready"), {
         headers: corsHeaders()
       });
     }
@@ -601,12 +636,30 @@ async function ensureOnlineQueueTable(env) {
         created_at_epoch_seconds INTEGER NOT NULL
       )
     `).run();
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_start_payloads (
+        match_id TEXT PRIMARY KEY,
+        settings_seed TEXT NOT NULL,
+        world_seed TEXT NOT NULL,
+        card_seed TEXT NOT NULL,
+        published_by_player_name TEXT NOT NULL,
+        published_at_epoch_seconds INTEGER NOT NULL
+      )
+    `).run();
   }
 
 async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
   await env.DB.prepare(`
     DELETE FROM online_queue_entries
     WHERE updated_at_epoch_seconds < ?
+  `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_start_payloads
+    WHERE match_id IN (
+      SELECT match_id
+      FROM online_matches
+      WHERE updated_at_epoch_seconds < ?
+    )
   `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
   await env.DB.prepare(`
     DELETE FROM online_match_players
@@ -688,6 +741,17 @@ async function loadActiveMatchForPlayer(env, playerName) {
       readyPlayerNames.push(playerEntryName);
     }
   }
+  const startPayloadRow = await env.DB.prepare(`
+    SELECT
+      settings_seed AS settingsSeed,
+      world_seed AS worldSeed,
+      card_seed AS cardSeed,
+      published_by_player_name AS publishedByPlayerName,
+      published_at_epoch_seconds AS publishedAtEpochSeconds
+    FROM online_match_start_payloads
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(row.matchId).first();
   return {
     matchId: row.matchId,
     queueMode: normalizeQueueMode(row.queueMode),
@@ -697,6 +761,13 @@ async function loadActiveMatchForPlayer(env, playerName) {
     startAfterEpochSeconds: Number(row.startAfterEpochSeconds || 0),
     settingsLines: parseJsonArray(tryParseMatchPayload(row.matchPayloadJson)?.settingsLines),
     definitionJson: String(row.matchPayloadJson || "{}"),
+    startPayload: startPayloadRow ? {
+      settingsSeed: String(startPayloadRow.settingsSeed || ""),
+      worldSeed: String(startPayloadRow.worldSeed || ""),
+      cardSeed: String(startPayloadRow.cardSeed || ""),
+      publishedByPlayerName: normalizePlayerName(startPayloadRow.publishedByPlayerName),
+      publishedAtEpochSeconds: Number(startPayloadRow.publishedAtEpochSeconds || 0)
+    } : null,
     playerNames,
     readyPlayerNames
   };
@@ -772,6 +843,10 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
 
 async function clearActiveMatch(env, matchId) {
   if (!matchId) return;
+  await env.DB.prepare(`
+    DELETE FROM online_match_start_payloads
+    WHERE match_id = ?
+  `).bind(matchId).run();
   await env.DB.prepare(`
     DELETE FROM online_match_runtime_states
     WHERE match_id = ?
