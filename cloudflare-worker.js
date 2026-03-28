@@ -606,7 +606,7 @@ async function maybeAdvanceMatchState(env, matchId, nowEpochSeconds) {
     return;
   }
 
-  if (currentState === "ready_to_start" && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 10) {
+  if (currentState === "ready_to_start" && Number(match.startAfterEpochSeconds || 0) > 0 && now >= Number(match.startAfterEpochSeconds || 0) + 5 * 60) {
     await env.DB.prepare(`
       DELETE FROM online_match_players
       WHERE match_id = ?
@@ -1071,6 +1071,9 @@ function requireApiKey(request, env) {
 }
 
 function parseJsonArray(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
   try {
     const parsed = JSON.parse(value || "[]");
     return Array.isArray(parsed) ? parsed : [];
