@@ -401,6 +401,123 @@ export default {
       });
     }
 
+    if (request.method === "POST" && url.pathname === "/online/match/draft/publish") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      const draftState = normalizeDraftState(body?.draftState);
+      if (!playerName || !matchId || !draftState) {
+        return Response.json({ status: "error", message: "Draft publish payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const hostPlayerName = await loadOnlineMatchHostPlayerName(env, matchId);
+      if (!hostPlayerName || hostPlayerName !== playerName) {
+        return Response.json({ status: "error", message: "Only the host can publish draft state" }, {
+          status: 403,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        INSERT INTO online_match_draft_states (
+          match_id,
+          state_json,
+          updated_at_epoch_seconds
+        ) VALUES (?, ?, ?)
+        ON CONFLICT(match_id) DO UPDATE SET
+          state_json = excluded.state_json,
+          updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
+      `).bind(matchId, JSON.stringify(draftState), now).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(now, matchId).run();
+      return Response.json({ status: "ok" }, {
+        headers: corsHeaders()
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/online/match/draft/pick") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      const choiceIndex = Math.max(0, Number(body?.choiceIndex || 0));
+      const x = Math.max(0, Number(body?.x || 0));
+      const y = Math.max(0, Number(body?.y || 0));
+      if (!playerName || !matchId) {
+        return Response.json({ status: "error", message: "Draft pick payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const row = await env.DB.prepare(`
+        SELECT state_json AS stateJson
+        FROM online_match_draft_states
+        WHERE match_id = ?
+        LIMIT 1
+      `).bind(matchId).first();
+      const draftState = normalizeDraftState(parseJsonObject(row?.stateJson));
+      if (!draftState || !draftState.active || draftState.finished) {
+        return Response.json({ status: "error", message: "Draft is not active" }, {
+          status: 409,
+          headers: corsHeaders()
+        });
+      }
+      const turnOrder = Array.isArray(draftState.turnOrder) ? draftState.turnOrder.map(normalizePlayerName).filter(Boolean) : [];
+      const currentTurnPlayer = turnOrder.length > 0
+        ? turnOrder[Math.max(0, Number(draftState.turnIndex || 0)) % turnOrder.length]
+        : "";
+      if (!currentTurnPlayer || currentTurnPlayer !== playerName) {
+        return Response.json({ status: "error", message: "It is not your draft turn" }, {
+          status: 409,
+          headers: corsHeaders()
+        });
+      }
+      if (draftState.pendingPick && normalizePlayerName(draftState.pendingPick.playerName)) {
+        return Response.json({ status: "error", message: "Draft pick already pending" }, {
+          status: 409,
+          headers: corsHeaders()
+        });
+      }
+      const occupied = new Set((Array.isArray(draftState.slots) ? draftState.slots : []).map((slot) => `${Number(slot?.x || -1)},${Number(slot?.y || -1)}`));
+      if (occupied.has(`${x},${y}`)) {
+        return Response.json({ status: "error", message: "Draft slot already taken" }, {
+          status: 409,
+          headers: corsHeaders()
+        });
+      }
+      const choices = Array.isArray(draftState.choices) ? draftState.choices : [];
+      if (choiceIndex < 0 || choiceIndex >= choices.length) {
+        return Response.json({ status: "error", message: "Draft choice is invalid" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      draftState.pendingPick = {
+        playerName,
+        choiceIndex,
+        x,
+        y
+      };
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        UPDATE online_match_draft_states
+        SET state_json = ?, updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(JSON.stringify(draftState), now, matchId).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(now, matchId).run();
+      return Response.json({ status: "ok" }, {
+        headers: corsHeaders()
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/online/match/chat") {
       const body = await request.json();
       const playerName = normalizePlayerName(body?.playerName);
@@ -838,13 +955,20 @@ async function ensureOnlineQueueTable(env) {
         )
       `).run();
       await env.DB.prepare(`
-        CREATE TABLE IF NOT EXISTS online_match_power_state (
+      CREATE TABLE IF NOT EXISTS online_match_power_state (
           match_id TEXT PRIMARY KEY,
           active INTEGER NOT NULL DEFAULT 0,
           slot_id TEXT NOT NULL DEFAULT '',
           display_name TEXT NOT NULL DEFAULT '',
           deadline_epoch_seconds INTEGER NOT NULL DEFAULT 0,
           claimed INTEGER NOT NULL DEFAULT 0,
+          updated_at_epoch_seconds INTEGER NOT NULL
+        )
+      `).run();
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_draft_states (
+          match_id TEXT PRIMARY KEY,
+          state_json TEXT NOT NULL DEFAULT '{}',
           updated_at_epoch_seconds INTEGER NOT NULL
         )
       `).run();
@@ -1195,6 +1319,10 @@ async function clearActiveMatch(env, matchId) {
     WHERE match_id = ?
   `).bind(matchId).run();
   await env.DB.prepare(`
+    DELETE FROM online_match_draft_states
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
     DELETE FROM online_match_forfeits
     WHERE match_id = ?
   `).bind(matchId).run();
@@ -1260,6 +1388,72 @@ async function upsertOnlineRuntimeState(env, state) {
     String(state.completedSlotIdsJson || "[]"),
     Number(state.updatedAtEpochSeconds || 0)
   ).run();
+}
+
+async function loadOnlineMatchHostPlayerName(env, matchId) {
+  const row = await env.DB.prepare(`
+    SELECT player_name AS playerName
+    FROM online_match_players
+    WHERE match_id = ?
+    ORDER BY joined_at_epoch_seconds ASC, player_name ASC
+    LIMIT 1
+  `).bind(matchId).first();
+  return normalizePlayerName(row?.playerName);
+}
+
+function normalizeDraftChoice(choice) {
+  if (!choice || typeof choice !== "object") return null;
+  const id = normalizeText(choice.id || "");
+  if (!id) return null;
+  return {
+    id,
+    name: normalizeText(choice.name || ""),
+    category: normalizeText(choice.category || ""),
+    rarity: normalizeText(choice.rarity || ""),
+    isQuest: Boolean(choice.isQuest)
+  };
+}
+
+function normalizeDraftSlot(slot) {
+  if (!slot || typeof slot !== "object") return null;
+  const choice = normalizeDraftChoice(slot);
+  if (!choice) return null;
+  return {
+    ...choice,
+    x: Math.max(0, Number(slot.x || 0)),
+    y: Math.max(0, Number(slot.y || 0))
+  };
+}
+
+function normalizeDraftState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const turnOrder = Array.isArray(value.turnOrder)
+    ? value.turnOrder.map(normalizePlayerName).filter(Boolean)
+    : [];
+  const choices = Array.isArray(value.choices)
+    ? value.choices.map(normalizeDraftChoice).filter(Boolean)
+    : [];
+  const slots = Array.isArray(value.slots)
+    ? value.slots.map(normalizeDraftSlot).filter(Boolean)
+    : [];
+  const pending = value.pendingPick && typeof value.pendingPick === "object"
+    ? {
+        playerName: normalizePlayerName(value.pendingPick.playerName),
+        choiceIndex: Math.max(0, Number(value.pendingPick.choiceIndex || 0)),
+        x: Math.max(0, Number(value.pendingPick.x || 0)),
+        y: Math.max(0, Number(value.pendingPick.y || 0))
+      }
+    : null;
+  return {
+    active: Boolean(value.active),
+    finished: Boolean(value.finished),
+    hostPlayerName: normalizePlayerName(value.hostPlayerName),
+    turnOrder,
+    turnIndex: Math.max(0, Number(value.turnIndex || 0)),
+    choices,
+    slots,
+    pendingPick: pending && pending.playerName ? pending : null
+  };
 }
 
 async function upsertOnlineTeamChestState(env, state) {
@@ -1569,6 +1763,12 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     WHERE match_id = ?
     LIMIT 1
   `).bind(matchId).first();
+  const draftStateRow = await env.DB.prepare(`
+    SELECT state_json AS stateJson
+    FROM online_match_draft_states
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(matchId).first();
   const slotOwnershipTeamIndices = {};
   for (const row of slotClaimsResult.results || []) {
     const slotId = normalizeChatMessage(row?.slotId);
@@ -1620,6 +1820,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
         : -1,
       claimed: Number(powerStateRow?.claimed || 0) !== 0
     },
+    draftState: normalizeDraftState(parseJsonObject(draftStateRow?.stateJson)),
     chatMessages: (chatResult.results || [])
       .filter((row) => {
         const channel = normalizeOnlineChatChannel(row.channel);
