@@ -1140,15 +1140,17 @@ async function clearActiveMatch(env, matchId) {
 async function shouldClearPreStartMatch(env, activeMatch, nowEpochSeconds) {
   if (!activeMatch?.matchId) return false;
   const state = String(activeMatch.state || "").trim().toLowerCase();
-  if (!["revealing", "ready_to_start", "launching"].includes(state)) {
+  if (!["pending_ready", "revealing", "ready_to_start", "launching"].includes(state)) {
     return false;
   }
 
   const now = Number(nowEpochSeconds || 0);
+  const createdAt = Number(activeMatch.createdAtEpochSeconds || 0);
   const startAfter = Number(activeMatch.startAfterEpochSeconds || 0);
   const startPayloadPublishedAt = Number(activeMatch.startPayload?.publishedAtEpochSeconds || 0);
-  const staleAnchor = Math.max(startAfter, startPayloadPublishedAt);
-  if (staleAnchor <= 0 || now < staleAnchor + 10) {
+  const staleAnchor = Math.max(createdAt, startAfter, startPayloadPublishedAt);
+  const staleDelay = state === "pending_ready" ? 30 : 10;
+  if (staleAnchor <= 0 || now < staleAnchor + staleDelay) {
     return false;
   }
 
