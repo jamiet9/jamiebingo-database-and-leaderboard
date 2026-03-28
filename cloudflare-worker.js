@@ -987,6 +987,11 @@ async function loadActiveMatchForPlayer(env, playerName) {
     LIMIT 1
   `).bind(playerName).first();
   if (!row) return null;
+  const state = String(row.state || "pending").trim().toLowerCase();
+  if (state === "finished" || state === "drawn") {
+    await clearActiveMatch(env, row.matchId);
+    return null;
+  }
   const { results } = await env.DB.prepare(`
     SELECT player_name AS playerName, ready AS ready
     FROM online_match_players
