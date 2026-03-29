@@ -2111,7 +2111,7 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   const naturalRegenEnabled = resolveTogglePreference(rng, controllerPreferences, "naturalRegen", true);
   const keepInventoryEnabled = resolveTogglePreference(rng, controllerPreferences, "keepInventory", false);
   const hardcoreEnabled = resolveTogglePreference(rng, controllerPreferences, "hardcore", false);
-  const teamChestEnabled = resolveTogglePreference(rng, controllerPreferences, "teamChest", true);
+  const teamChestEnabled = false;
   const minesEnabled = resolveTogglePreference(rng, controllerPreferences, "mines", false);
   const powerSlotEnabled = resolveTogglePreference(rng, controllerPreferences, "powerSlot", false);
   const draftEnabled = resolveTogglePreference(rng, controllerPreferences, "draft", false);
@@ -2132,7 +2132,7 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
     `Natural Regen: ${naturalRegenEnabled ? "On" : "Off"}`,
     `Keep Inventory: ${keepInventoryEnabled ? "Enabled" : "Disabled"}`,
     `Hardcore: ${hardcoreEnabled ? "Enabled" : "Disabled"}`,
-    `Team Chest: ${teamChestEnabled ? "Enabled" : "Disabled"}`,
+    "Team Chest: Disabled",
     `Mines: ${minesEnabled ? "Enabled" : "Disabled"}`,
     `Power Slot: ${powerSlotEnabled ? "Enabled" : "Disabled"}`,
     `Draft: ${draftEnabled ? "Enabled" : "Disabled"}`,
@@ -2141,7 +2141,7 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
     "PVP: Disabled",
     "Adventure: Disabled",
     "Late Join: Disabled",
-    "Team Sync: Enabled",
+    "Team Sync: Disabled",
     "Delay: 60s",
     "New Seed Every Game: Enabled",
     `World Type: ${resolveWorldTypeLabel(worldTypeMode)}`,
@@ -2330,8 +2330,8 @@ function normalizeQueueMode(value) {
 
 function queueModeLabel(queueMode) {
   return ({
-    RANKED_1V1: "Ranked 1v1",
-    CASUAL_1V1: "Casual 1v1",
+    RANKED_1V1: "1v1",
+    CASUAL_1V1: "1v1",
     CASUAL_FFA: "Casual FFA",
     CASUAL_2S: "Casual 2s",
     CASUAL_3S: "Casual 3s",
