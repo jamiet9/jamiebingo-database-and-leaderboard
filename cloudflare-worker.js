@@ -413,7 +413,24 @@ export default {
         });
       }
       const hostPlayerName = await loadOnlineMatchHostPlayerName(env, matchId);
-      if (!hostPlayerName || hostPlayerName !== playerName) {
+      const existingRow = await env.DB.prepare(`
+        SELECT state_json AS stateJson
+        FROM online_match_draft_states
+        WHERE match_id = ?
+        LIMIT 1
+      `).bind(matchId).first();
+      const existingDraftState = normalizeDraftState(parseJsonObject(existingRow?.stateJson));
+      const existingTurnOrder = Array.isArray(existingDraftState?.turnOrder)
+        ? existingDraftState.turnOrder.map(normalizePlayerName).filter(Boolean)
+        : [];
+      const existingCurrentTurnPlayer = existingTurnOrder.length > 0
+        ? existingTurnOrder[Math.max(0, Number(existingDraftState?.turnIndex || 0)) % existingTurnOrder.length]
+        : "";
+      const canPublishInitial = !existingDraftState && hostPlayerName && hostPlayerName === playerName;
+      const canPublishTurnAdvance = !!existingDraftState
+        && !!existingCurrentTurnPlayer
+        && existingCurrentTurnPlayer === playerName;
+      if (!canPublishInitial && !canPublishTurnAdvance) {
         return Response.json({ status: "error", message: "Only the host can publish draft state" }, {
           status: 403,
           headers: corsHeaders()
