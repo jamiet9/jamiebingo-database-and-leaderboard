@@ -2433,7 +2433,7 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   const rng = createSeededRandom(matchSeed);
   const win = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "win", ["FULL", "LINE", "BLIND"], "FULL");
   const cardSize = resolveHeadToHeadCardSizeValue(rng, controllerPreferences);
-  const cardDifficulty = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal").toLowerCase();
+  const cardDifficulty = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "cardDifficulty", ["easy", "normal", "hard"], "normal").toLowerCase();
   const gameDifficulty = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal").toLowerCase();
   const effectsEnabled = false;
   const rtpEnabled = false;
