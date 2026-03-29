@@ -531,6 +531,64 @@ export default {
       });
     }
 
+    if (request.method === "POST" && url.pathname === "/online/match/reroll/publish") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      const rerollState = normalizeRerollState(body?.rerollState);
+      if (!playerName || !matchId || !rerollState) {
+        return Response.json({ status: "error", message: "Reroll publish payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const hostPlayerName = await loadOnlineMatchHostPlayerName(env, matchId);
+      const existingRow = await env.DB.prepare(`
+        SELECT state_json AS stateJson
+        FROM online_match_reroll_states
+        WHERE match_id = ?
+        LIMIT 1
+      `).bind(matchId).first();
+      const existingRerollState = normalizeRerollState(parseJsonObject(existingRow?.stateJson));
+      const existingTurnOrder = Array.isArray(existingRerollState?.turnOrder)
+        ? existingRerollState.turnOrder.map(normalizePlayerName).filter(Boolean)
+        : [];
+      const existingCurrentTurnPlayer = existingTurnOrder.length > 0
+        ? existingTurnOrder[Math.max(0, Number(existingRerollState?.turnIndex || 0)) % existingTurnOrder.length]
+        : "";
+      const normalizedHost = normalizePlayerName(hostPlayerName).toLowerCase();
+      const normalizedPlayer = normalizePlayerName(playerName).toLowerCase();
+      const canPublishInitial = !existingRerollState && normalizedHost && normalizedHost === normalizedPlayer;
+      const canPublishTurnAdvance = !!existingRerollState
+        && !!existingCurrentTurnPlayer
+        && normalizePlayerName(existingCurrentTurnPlayer).toLowerCase() === normalizedPlayer;
+      if (!canPublishInitial && !canPublishTurnAdvance) {
+        return Response.json({ status: "error", message: "Only the host or active player can publish reroll state" }, {
+          status: 403,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        INSERT INTO online_match_reroll_states (
+          match_id,
+          state_json,
+          updated_at_epoch_seconds
+        ) VALUES (?, ?, ?)
+        ON CONFLICT(match_id) DO UPDATE SET
+          state_json = excluded.state_json,
+          updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
+      `).bind(matchId, JSON.stringify(rerollState), now).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(now, matchId).run();
+      return Response.json({ status: "ok" }, {
+        headers: corsHeaders()
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/online/match/chat") {
       const body = await request.json();
       const playerName = normalizePlayerName(body?.playerName);
@@ -1010,6 +1068,13 @@ async function ensureOnlineQueueTable(env) {
         )
       `).run();
       await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_reroll_states (
+          match_id TEXT PRIMARY KEY,
+          state_json TEXT NOT NULL DEFAULT '{}',
+          updated_at_epoch_seconds INTEGER NOT NULL
+        )
+      `).run();
+      await env.DB.prepare(`
         CREATE TABLE IF NOT EXISTS online_match_draw_votes (
         match_id TEXT NOT NULL,
         player_name TEXT NOT NULL,
@@ -1360,6 +1425,10 @@ async function clearActiveMatch(env, matchId) {
     WHERE match_id = ?
   `).bind(matchId).run();
   await env.DB.prepare(`
+    DELETE FROM online_match_reroll_states
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
     DELETE FROM online_match_forfeits
     WHERE match_id = ?
   `).bind(matchId).run();
@@ -1495,6 +1564,76 @@ function normalizeDraftState(value) {
     choices,
     slots,
     pendingPick: pending && pending.playerName ? pending : null
+  };
+}
+
+function normalizeRerollSlot(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const id = normalizeText(value.id);
+  const name = normalizeText(value.name);
+  if (!id || !name) return null;
+  return {
+    x: Math.max(0, Number(value.x || 0)),
+    y: Math.max(0, Number(value.y || 0)),
+    id,
+    name,
+    category: normalizeText(value.category),
+    rarity: normalizeText(value.rarity),
+    isQuest: Boolean(value.isQuest)
+  };
+}
+
+function normalizeRerollPlayer(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const playerName = normalizePlayerName(value.playerName);
+  if (!playerName) return null;
+  return {
+    playerName,
+    remaining: Math.max(0, Number(value.remaining || 0))
+  };
+}
+
+function normalizeRerollEvent(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const slot = normalizeRerollSlot(value);
+  if (!slot) return null;
+  return {
+    nonce: Math.max(0, Number(value.nonce || 0)),
+    x: slot.x,
+    y: slot.y,
+    id: slot.id,
+    name: slot.name,
+    category: slot.category,
+    rarity: slot.rarity,
+    isQuest: slot.isQuest
+  };
+}
+
+function normalizeRerollState(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const turnOrder = Array.isArray(value.turnOrder)
+    ? value.turnOrder.map(normalizePlayerName).filter(Boolean)
+    : [];
+  const players = Array.isArray(value.players)
+    ? value.players.map(normalizeRerollPlayer).filter(Boolean)
+    : [];
+  const slots = Array.isArray(value.slots)
+    ? value.slots.map(normalizeRerollSlot).filter(Boolean)
+    : [];
+  const lastEvent = normalizeRerollEvent(value.lastEvent);
+  const active = Boolean(value.active);
+  const finished = Boolean(value.finished);
+  if (!active && !finished && turnOrder.length === 0 && players.length === 0 && slots.length === 0 && !lastEvent) {
+    return null;
+  }
+  return {
+    active,
+    finished,
+    turnOrder,
+    turnIndex: Math.max(0, Number(value.turnIndex || 0)),
+    players,
+    slots,
+    lastEvent
   };
 }
 
@@ -1907,6 +2046,12 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     WHERE match_id = ?
     LIMIT 1
   `).bind(matchId).first();
+  const rerollStateRow = await env.DB.prepare(`
+    SELECT state_json AS stateJson
+    FROM online_match_reroll_states
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(matchId).first();
   const slotOwnershipTeamIndices = {};
   for (const row of slotClaimsResult.results || []) {
     const slotId = normalizeChatMessage(row?.slotId);
@@ -1963,6 +2108,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
       resolvedByPlayerName: normalizePlayerName(powerStateRow?.resolvedByPlayerName || "")
     },
     draftState: draftStateRow?.stateJson ? normalizeDraftState(parseJsonObject(draftStateRow.stateJson)) : null,
+    rerollState: rerollStateRow?.stateJson ? normalizeRerollState(parseJsonObject(rerollStateRow.stateJson)) : null,
     chatMessages: (chatResult.results || [])
       .filter((row) => {
         const channel = normalizeOnlineChatChannel(row.channel);
@@ -2219,23 +2365,23 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   const worldPreferences = queueRows.map((row) => row.worldPreferences || {});
   const matchSeed = (nowEpochSeconds * 1000003) ^ Math.floor(Math.random() * 2147483647);
   const rng = createSeededRandom(matchSeed);
-  const win = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "win", ["FULL", "LINE", "LOCKOUT", "RARITY", "BLIND", "HANGMAN", "GUNGAME", "GAMEGUN"], "FULL");
+  const win = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "win", ["FULL", "LINE", "BLIND"], "FULL");
   const cardSize = resolveHeadToHeadCardSizeValue(rng, controllerPreferences);
   const cardDifficulty = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal").toLowerCase();
   const gameDifficulty = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal").toLowerCase();
-  const effectsEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "effects", false);
-  const rtpEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "rtp", false);
+  const effectsEnabled = false;
+  const rtpEnabled = false;
   const hostileMobsEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "hostileMobs", true);
   const hungerEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "hunger", true);
   const naturalRegenEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "naturalRegen", true);
   const keepInventoryEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "keepInventory", false);
   const hardcoreEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "hardcore", false);
   const teamChestEnabled = false;
-  const minesEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "mines", false);
-  const powerSlotEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "powerSlot", false);
+  const minesEnabled = false;
+  const powerSlotEnabled = false;
   const draftEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "draft", false);
   const rerollsEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "rerolls", false);
-  const fakeRerollsEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "fakeRerolls", false);
+  const fakeRerollsEnabled = false;
   const worldTypeMode = resolveHeadToHeadWorldType(rng, worldPreferences);
   const surfaceCaveBiomes = resolveHeadToHeadTogglePreference(rng, worldPreferences, "surfaceCaveBiomes", false);
   const prelitPortalsMode = resolveHeadToHeadPrelitPortals(rng, worldPreferences);
@@ -2244,19 +2390,15 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
     `Card Size: ${cardSize}x${cardSize}`,
     `Card Difficulty: ${cardDifficulty}`,
     `Game Difficulty: ${gameDifficulty}`,
-    `Effects: ${effectsEnabled ? "Enabled" : "Disabled"}`,
-    `RTP: ${rtpEnabled ? "Enabled" : "Disabled"}`,
     `Hostile Mobs: ${hostileMobsEnabled ? "Enabled" : "Disabled"}`,
     `Hunger: ${hungerEnabled ? "Enabled" : "Disabled"}`,
     `Natural Regen: ${naturalRegenEnabled ? "On" : "Off"}`,
     `Keep Inventory: ${keepInventoryEnabled ? "Enabled" : "Disabled"}`,
     `Hardcore: ${hardcoreEnabled ? "Enabled" : "Disabled"}`,
+    `Hide Goal Details: ${win === "BLIND" ? "On" : "Off"}`,
     "Team Chest: Disabled",
-    `Mines: ${minesEnabled ? "Enabled" : "Disabled"}`,
-    `Power Slot: ${powerSlotEnabled ? "Enabled" : "Disabled"}`,
     `Draft: ${draftEnabled ? "Enabled" : "Disabled"}`,
     `Rerolls: ${rerollsEnabled ? "Enabled" : "Disabled"}`,
-    `Fake Rerolls: ${fakeRerollsEnabled ? "Enabled" : "Disabled"}`,
     "PVP: Disabled",
     "Adventure: Disabled",
     "Late Join: Disabled",
