@@ -2100,26 +2100,26 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   const worldPreferences = queueRows.map((row) => row.worldPreferences || {});
   const matchSeed = (nowEpochSeconds * 1000003) ^ Math.floor(Math.random() * 2147483647);
   const rng = createSeededRandom(matchSeed);
-  const win = resolveEnumPreference(rng, controllerPreferences, "win", ["FULL", "LINE", "LOCKOUT", "RARITY", "BLIND", "HANGMAN", "GUNGAME", "GAMEGUN"], "FULL");
-  const cardSize = resolveCardSizeValue(rng, controllerPreferences);
-  const cardDifficulty = resolveEnumPreference(rng, controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal").toLowerCase();
-  const gameDifficulty = resolveEnumPreference(rng, controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal").toLowerCase();
-  const effectsEnabled = resolveTogglePreference(rng, controllerPreferences, "effects", false);
-  const rtpEnabled = resolveTogglePreference(rng, controllerPreferences, "rtp", false);
-  const hostileMobsEnabled = resolveTogglePreference(rng, controllerPreferences, "hostileMobs", true);
-  const hungerEnabled = resolveTogglePreference(rng, controllerPreferences, "hunger", true);
-  const naturalRegenEnabled = resolveTogglePreference(rng, controllerPreferences, "naturalRegen", true);
-  const keepInventoryEnabled = resolveTogglePreference(rng, controllerPreferences, "keepInventory", false);
-  const hardcoreEnabled = resolveTogglePreference(rng, controllerPreferences, "hardcore", false);
+  const win = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "win", ["FULL", "LINE", "LOCKOUT", "RARITY", "BLIND", "HANGMAN", "GUNGAME", "GAMEGUN"], "FULL");
+  const cardSize = resolveHeadToHeadCardSizeValue(rng, controllerPreferences);
+  const cardDifficulty = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "cardDifficulty", ["easy", "normal", "hard", "extreme"], "normal").toLowerCase();
+  const gameDifficulty = resolveHeadToHeadEnumPreference(rng, controllerPreferences, "gameDifficulty", ["easy", "normal", "hard"], "normal").toLowerCase();
+  const effectsEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "effects", false);
+  const rtpEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "rtp", false);
+  const hostileMobsEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "hostileMobs", true);
+  const hungerEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "hunger", true);
+  const naturalRegenEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "naturalRegen", true);
+  const keepInventoryEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "keepInventory", false);
+  const hardcoreEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "hardcore", false);
   const teamChestEnabled = false;
-  const minesEnabled = resolveTogglePreference(rng, controllerPreferences, "mines", false);
-  const powerSlotEnabled = resolveTogglePreference(rng, controllerPreferences, "powerSlot", false);
-  const draftEnabled = resolveTogglePreference(rng, controllerPreferences, "draft", false);
-  const rerollsEnabled = resolveTogglePreference(rng, controllerPreferences, "rerolls", false);
-  const fakeRerollsEnabled = resolveTogglePreference(rng, controllerPreferences, "fakeRerolls", false);
-  const worldTypeMode = resolveWorldType(rng, worldPreferences);
-  const surfaceCaveBiomes = resolveTogglePreference(rng, worldPreferences, "surfaceCaveBiomes", false);
-  const prelitPortalsMode = resolvePrelitPortals(rng, worldPreferences);
+  const minesEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "mines", false);
+  const powerSlotEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "powerSlot", false);
+  const draftEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "draft", false);
+  const rerollsEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "rerolls", false);
+  const fakeRerollsEnabled = resolveHeadToHeadTogglePreference(rng, controllerPreferences, "fakeRerolls", false);
+  const worldTypeMode = resolveHeadToHeadWorldType(rng, worldPreferences);
+  const surfaceCaveBiomes = resolveHeadToHeadTogglePreference(rng, worldPreferences, "surfaceCaveBiomes", false);
+  const prelitPortalsMode = resolveHeadToHeadPrelitPortals(rng, worldPreferences);
   const settingsLines = [
     `Mode: ${win}`,
     `Card Size: ${cardSize}x${cardSize}`,
@@ -2175,6 +2175,58 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
     prelitPortalsMode,
     settingsLines
   };
+}
+
+function chooseHeadToHeadPreferenceObject(rng, preferenceObjects) {
+  const list = Array.isArray(preferenceObjects) ? preferenceObjects.filter((entry) => entry && typeof entry === "object") : [];
+  if (list.length <= 0) return {};
+  if (list.length === 1) return list[0];
+  return (rng ? rng() : Math.random()) < 0.5 ? list[0] : list[1];
+}
+
+function randomChoice(rng, options, fallback) {
+  const normalizedOptions = Array.isArray(options) ? options : [];
+  if (!normalizedOptions.length) return fallback;
+  const index = Math.max(0, Math.min(normalizedOptions.length - 1, Math.floor((rng ? rng() : Math.random()) * normalizedOptions.length)));
+  return normalizedOptions[index];
+}
+
+function resolveHeadToHeadTogglePreference(rng, preferenceObjects, key, defaultValue) {
+  const chosen = chooseHeadToHeadPreferenceObject(rng, preferenceObjects);
+  const value = String(chosen?.[key] || "").trim().toUpperCase();
+  if (value === "ON") return true;
+  if (value === "OFF") return false;
+  return randomChoice(rng, [true, false], Boolean(defaultValue));
+}
+
+function resolveHeadToHeadEnumPreference(rng, preferenceObjects, key, options, defaultValue) {
+  const normalizedOptions = (Array.isArray(options) ? options : []).map((option) => String(option).toUpperCase());
+  const chosen = chooseHeadToHeadPreferenceObject(rng, preferenceObjects);
+  const value = String(chosen?.[key] || "").trim().toUpperCase();
+  if (value !== "" && value !== "RANDOM" && value !== "RAND" && value !== "-1" && normalizedOptions.includes(value)) {
+    return value;
+  }
+  return randomChoice(rng, normalizedOptions, String(defaultValue || normalizedOptions[0] || "").toUpperCase());
+}
+
+function resolveHeadToHeadCardSizeValue(rng, preferenceObjects) {
+  const chosen = chooseHeadToHeadPreferenceObject(rng, preferenceObjects);
+  const allowedSizes = [2, 3, 4, 5];
+  if (chosen && !chosen.randomCardSize) {
+    const size = Number(chosen.cardSize || 0);
+    if (allowedSizes.includes(size)) {
+      return size;
+    }
+  }
+  return Number(randomChoice(rng, allowedSizes, 5) || 5);
+}
+
+function resolveHeadToHeadWorldType(rng, preferenceObjects) {
+  return Number(resolveHeadToHeadEnumPreference(rng, preferenceObjects, "worldTypeMode", ["0", "1", "3"], "0") || 0);
+}
+
+function resolveHeadToHeadPrelitPortals(rng, preferenceObjects) {
+  return Number(resolveHeadToHeadEnumPreference(rng, preferenceObjects, "prelitPortalsMode", ["0", "1", "2", "3"], "0") || 0);
 }
 
 function resolveTogglePreference(rng, preferenceObjects, key, defaultValue) {
