@@ -2574,6 +2574,10 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
   const worldTypeMode = resolveHeadToHeadWorldType(rng, worldPreferences);
   const surfaceCaveBiomes = resolveHeadToHeadTogglePreference(rng, worldPreferences, "surfaceCaveBiomes", false);
   const prelitPortalsMode = resolveHeadToHeadPrelitPortals(rng, worldPreferences);
+  const blindMode = win === "BLIND";
+  const sanitizedDraftEnabled = blindMode ? false : draftEnabled;
+  const sanitizedRerollsEnabled = blindMode ? false : rerollsEnabled;
+  const delaySeconds = blindMode ? 0 : 60;
   const settingsLines = [
     `Mode: ${win}`,
     `Card Size: ${cardSize}x${cardSize}`,
@@ -2586,13 +2590,13 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
     `Hardcore: ${hardcoreEnabled ? "Enabled" : "Disabled"}`,
     `Hide Goal Details: ${win === "BLIND" ? "On" : "Off"}`,
     "Team Chest: Disabled",
-    `Draft: ${draftEnabled ? "Enabled" : "Disabled"}`,
-    `Rerolls: ${rerollsEnabled ? "Enabled" : "Disabled"}`,
+    `Draft: ${sanitizedDraftEnabled ? "Enabled" : "Disabled"}`,
+    `Rerolls: ${sanitizedRerollsEnabled ? "Enabled" : "Disabled"}`,
     "PVP: Disabled",
     "Adventure: Disabled",
     "Late Join: Disabled",
     "Team Sync: Disabled",
-    "Delay: 60s",
+    `Delay: ${delaySeconds <= 0 ? "Off" : (delaySeconds + "s")}`,
     "New Seed Every Game: Enabled",
     `World Type: ${resolveWorldTypeLabel(worldTypeMode)}`,
     `World Surface Cave Biomes: ${surfaceCaveBiomes ? "Enabled" : "Disabled"}`,
@@ -2617,8 +2621,8 @@ function buildMatchPayload(queueMode, queueRows, nowEpochSeconds) {
     teamChestEnabled,
     minesEnabled,
     powerSlotEnabled,
-    draftEnabled,
-    rerollsEnabled,
+    draftEnabled: sanitizedDraftEnabled,
+    rerollsEnabled: sanitizedRerollsEnabled,
     fakeRerollsEnabled,
     worldTypeMode,
     surfaceCaveBiomes,
