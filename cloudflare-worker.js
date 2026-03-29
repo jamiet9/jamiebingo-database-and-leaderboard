@@ -678,6 +678,8 @@ export default {
       const body = await request.json();
       const playerName = normalizePlayerName(body?.playerName);
       const matchId = normalizeText(body?.matchId);
+      const reasonMessage = normalizeText(body?.reasonMessage);
+      const systemMessage = normalizeText(body?.systemMessage);
       if (!playerName || !matchId) {
         return Response.json({ status: "error", message: "Forfeit payload incomplete" }, {
           status: 400,
@@ -696,11 +698,13 @@ export default {
         INSERT INTO online_match_forfeits (
           match_id,
           player_name,
-          forfeited_at_epoch_seconds
-        ) VALUES (?, ?, ?)
+          forfeited_at_epoch_seconds,
+          reason_text
+        ) VALUES (?, ?, ?, ?)
         ON CONFLICT(match_id, player_name) DO UPDATE SET
-          forfeited_at_epoch_seconds = excluded.forfeited_at_epoch_seconds
-      `).bind(matchId, playerName, now).run();
+          forfeited_at_epoch_seconds = excluded.forfeited_at_epoch_seconds,
+          reason_text = excluded.reason_text
+      `).bind(matchId, playerName, now, reasonMessage || "Player forfeited the game.").run();
       await env.DB.prepare(`
         DELETE FROM online_match_draw_votes
         WHERE match_id = ? AND player_name = ?
@@ -710,7 +714,53 @@ export default {
         SET updated_at_epoch_seconds = ?
         WHERE match_id = ?
       `).bind(now, matchId).run();
-      await appendSystemMatchChat(env, matchId, `${playerName} forfeited the online match.`);
+      await appendSystemMatchChat(env, matchId, systemMessage || `${playerName} forfeited the online match.`);
+      return Response.json({ status: "ok" }, {
+        headers: corsHeaders()
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/online/match/eliminate") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      const reasonMessage = normalizeText(body?.reasonMessage);
+      const systemMessage = normalizeText(body?.systemMessage);
+      if (!playerName || !matchId || !reasonMessage) {
+        return Response.json({ status: "error", message: "Elimination payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const sender = await loadOnlineMatchPlayerRow(env, matchId, playerName);
+      if (!sender) {
+        return Response.json({ status: "error", message: "Match player not found" }, {
+          status: 404,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        INSERT INTO online_match_forfeits (
+          match_id,
+          player_name,
+          forfeited_at_epoch_seconds,
+          reason_text
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(match_id, player_name) DO UPDATE SET
+          forfeited_at_epoch_seconds = excluded.forfeited_at_epoch_seconds,
+          reason_text = excluded.reason_text
+      `).bind(matchId, playerName, now, reasonMessage).run();
+      await env.DB.prepare(`
+        DELETE FROM online_match_draw_votes
+        WHERE match_id = ? AND player_name = ?
+      `).bind(matchId, playerName).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(now, matchId).run();
+      await appendSystemMatchChat(env, matchId, systemMessage || `${playerName} was eliminated.`);
       return Response.json({ status: "ok" }, {
         headers: corsHeaders()
       });
@@ -1087,9 +1137,17 @@ async function ensureOnlineQueueTable(env) {
         match_id TEXT NOT NULL,
         player_name TEXT NOT NULL,
         forfeited_at_epoch_seconds INTEGER NOT NULL,
+        reason_text TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (match_id, player_name)
       )
     `).run();
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE online_match_forfeits
+        ADD COLUMN reason_text TEXT NOT NULL DEFAULT ''
+      `).run();
+    } catch {
+    }
   }
 
 async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
@@ -1915,15 +1973,18 @@ async function autoForfeitStalePlayers(env, matchId, nowEpochSeconds) {
       INSERT INTO online_match_forfeits (
         match_id,
         player_name,
-        forfeited_at_epoch_seconds
-      ) VALUES (?, ?, ?)
-      ON CONFLICT(match_id, player_name) DO NOTHING
-    `).bind(matchId, playerName, nowEpochSeconds).run();
+        forfeited_at_epoch_seconds,
+        reason_text
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(match_id, player_name) DO UPDATE SET
+        forfeited_at_epoch_seconds = excluded.forfeited_at_epoch_seconds,
+        reason_text = excluded.reason_text
+    `).bind(matchId, playerName, nowEpochSeconds, "Player disconnected.").run();
     await env.DB.prepare(`
       DELETE FROM online_match_draw_votes
       WHERE match_id = ? AND player_name = ?
     `).bind(matchId, playerName).run();
-    await appendSystemMatchChat(env, matchId, `${playerName} disconnected and forfeited after 2 minutes.`);
+    await appendSystemMatchChat(env, matchId, `${playerName} disconnected and was eliminated.`);
   }
 }
 
@@ -1938,7 +1999,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     LIMIT 1
   `).bind(matchId).first();
   const forfeitsResult = await env.DB.prepare(`
-    SELECT player_name AS playerName
+    SELECT player_name AS playerName, reason_text AS reasonText
     FROM online_match_forfeits
     WHERE match_id = ?
   `).bind(matchId).all();
@@ -2058,7 +2119,9 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     if (!slotId) continue;
     slotOwnershipTeamIndices[slotId] = Math.max(0, Number(row?.teamIndex || 0));
   }
-  const outcome = computeOnlineMatchOutcome(tryParseMatchPayload(matchRow?.matchPayloadJson), players, drawVoters);
+  const forfeitReasons = new Map((forfeitsResult.results || [])
+    .map((row) => [normalizePlayerName(row?.playerName), normalizeText(row?.reasonText)]));
+  const outcome = computeOnlineMatchOutcome(tryParseMatchPayload(matchRow?.matchPayloadJson), players, drawVoters, forfeitReasons);
   if (outcome.resultState !== "active") {
     await env.DB.prepare(`
       UPDATE online_matches
@@ -2126,7 +2189,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
   };
 }
 
-function computeOnlineMatchOutcome(matchPayload, players, drawVoters) {
+function computeOnlineMatchOutcome(matchPayload, players, drawVoters, forfeitReasons) {
   const normalizedPlayers = Array.isArray(players) ? players : [];
   const activePlayers = normalizedPlayers.filter((player) => !player.forfeited);
   if (activePlayers.length === 0) {
@@ -2152,10 +2215,13 @@ function computeOnlineMatchOutcome(matchPayload, players, drawVoters) {
   }
   if (activeTeams.size === 1 && normalizedPlayers.length > 1) {
     const winner = Array.from(activeTeams.values())[0];
-    const anyForfeits = forfeitedPlayers.size > 0;
+    const eliminatedPlayers = normalizedPlayers.filter((player) => player.forfeited);
+    const firstReason = eliminatedPlayers
+      .map((player) => normalizeText(forfeitReasons instanceof Map ? forfeitReasons.get(normalizePlayerName(player.playerName)) : ""))
+      .find(Boolean);
     return {
       resultState: "winner",
-      resultMessage: anyForfeits ? "Won after the other player forfeited or disconnected." : "Won by elimination.",
+      resultMessage: firstReason || "Won by elimination.",
       winnerPlayerNames: winner.players
     };
   }
