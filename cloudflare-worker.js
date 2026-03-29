@@ -678,6 +678,44 @@ export default {
       });
     }
 
+    if (request.method === "POST" && url.pathname === "/online/match/vote-skip-delay") {
+      const body = await request.json();
+      const playerName = normalizePlayerName(body?.playerName);
+      const matchId = normalizeText(body?.matchId);
+      if (!playerName || !matchId) {
+        return Response.json({ status: "error", message: "Vote skip payload incomplete" }, {
+          status: 400,
+          headers: corsHeaders()
+        });
+      }
+      const sender = await loadOnlineMatchPlayerRow(env, matchId, playerName);
+      if (!sender) {
+        return Response.json({ status: "error", message: "Match player not found" }, {
+          status: 404,
+          headers: corsHeaders()
+        });
+      }
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(`
+        INSERT INTO online_match_delay_skip_votes (
+          match_id,
+          player_name,
+          voted_at_epoch_seconds
+        ) VALUES (?, ?, ?)
+        ON CONFLICT(match_id, player_name) DO UPDATE SET
+          voted_at_epoch_seconds = excluded.voted_at_epoch_seconds
+      `).bind(matchId, playerName, now).run();
+      await env.DB.prepare(`
+        UPDATE online_matches
+        SET updated_at_epoch_seconds = ?
+        WHERE match_id = ?
+      `).bind(now, matchId).run();
+      await appendSystemMatchChat(env, matchId, `${playerName} voted to skip the delay.`);
+      return Response.json({ status: "ok" }, {
+        headers: corsHeaders()
+      });
+    }
+
     if (request.method === "POST" && url.pathname === "/online/match/forfeit") {
       const body = await request.json();
       const playerName = normalizePlayerName(body?.playerName);
@@ -1138,8 +1176,16 @@ async function ensureOnlineQueueTable(env) {
           updated_at_epoch_seconds INTEGER NOT NULL
         )
       `).run();
-      await env.DB.prepare(`
-        CREATE TABLE IF NOT EXISTS online_match_draw_votes (
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_draw_votes (
+        match_id TEXT NOT NULL,
+        player_name TEXT NOT NULL,
+        voted_at_epoch_seconds INTEGER NOT NULL,
+        PRIMARY KEY (match_id, player_name)
+      )
+    `).run();
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS online_match_delay_skip_votes (
         match_id TEXT NOT NULL,
         player_name TEXT NOT NULL,
         voted_at_epoch_seconds INTEGER NOT NULL,
@@ -1199,6 +1245,14 @@ async function cleanupStaleOnlineQueueEntries(env, nowEpochSeconds) {
   `).bind(Number(nowEpochSeconds || 0) - (ONLINE_QUEUE_STALE_SECONDS * 2)).run();
   await env.DB.prepare(`
     DELETE FROM online_match_draw_votes
+    WHERE match_id IN (
+      SELECT match_id
+      FROM online_matches
+      WHERE updated_at_epoch_seconds < ?
+    )
+  `).bind(Number(nowEpochSeconds || 0) - ONLINE_QUEUE_STALE_SECONDS).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_delay_skip_votes
     WHERE match_id IN (
       SELECT match_id
       FROM online_matches
@@ -1482,6 +1536,10 @@ async function clearActiveMatch(env, matchId) {
   `).bind(matchId).run();
   await env.DB.prepare(`
     DELETE FROM online_match_draw_votes
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
+    DELETE FROM online_match_delay_skip_votes
     WHERE match_id = ?
   `).bind(matchId).run();
   await env.DB.prepare(`
@@ -2051,6 +2109,11 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     FROM online_match_draw_votes
     WHERE match_id = ?
   `).bind(matchId).all();
+  const delaySkipVotesResult = await env.DB.prepare(`
+    SELECT player_name AS playerName
+    FROM online_match_delay_skip_votes
+    WHERE match_id = ?
+  `).bind(matchId).all();
   const playersResult = await env.DB.prepare(`
     SELECT
       p.player_name AS playerName,
@@ -2090,6 +2153,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
   `).bind(matchId).all();
   const forfeitedPlayers = new Set((forfeitsResult.results || []).map((row) => normalizePlayerName(row?.playerName)).filter(Boolean));
   const drawVoters = new Set((drawVotesResult.results || []).map((row) => normalizePlayerName(row?.playerName)).filter(Boolean));
+  const delaySkipVoters = new Set((delaySkipVotesResult.results || []).map((row) => normalizePlayerName(row?.playerName)).filter(Boolean));
   const players = (playersResult.results || []).map((row) => ({
     playerName: normalizePlayerName(row.playerName),
     teamIndex: Number(row.teamIndex || 0),
@@ -2187,6 +2251,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     status: "ok",
     players,
     drawVotes: drawVoters.size,
+    delaySkipVotes: delaySkipVoters.size,
     activePlayers: players.filter((player) => !player.forfeited).length,
     syncedPlayerCount,
     sharedSpawnX: Number(sharedSpawnRow?.x || 0),
@@ -2194,6 +2259,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     sharedSpawnZ: Number(sharedSpawnRow?.z || 0),
     sharedSpawnPublishedByPlayerName: normalizePlayerName(sharedSpawnRow?.publishedByPlayerName),
     localDrawVoted: playerName ? drawVoters.has(playerName) : false,
+    localDelaySkipVoted: playerName ? delaySkipVoters.has(playerName) : false,
     localForfeited: playerName ? forfeitedPlayers.has(playerName) : false,
     resultState: outcome.resultState,
     resultMessage: outcome.resultMessage,
