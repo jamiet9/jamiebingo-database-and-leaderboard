@@ -299,6 +299,10 @@ export default {
         completedLines: Number(body?.completedLines || 0),
         preferredColorId: Number(body?.preferredColorId ?? -1),
         completedSlotIdsJson: JSON.stringify(Array.isArray(body?.completedSlotIds) ? body.completedSlotIds : []),
+        spawnPublished: Boolean(body?.spawnPublished),
+        spawnX: Number(body?.spawnX || 0),
+        spawnY: Number(body?.spawnY || 0),
+        spawnZ: Number(body?.spawnZ || 0),
         updatedAtEpochSeconds: now
       });
       await env.DB.prepare(`
