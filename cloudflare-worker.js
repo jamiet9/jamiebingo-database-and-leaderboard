@@ -315,7 +315,7 @@ export default {
       });
       await upsertOnlineTeamMineState(env, {
         matchId,
-        teamIndex: Number(sender.teamIndex || 0),
+        teamIndex: 0,
         active: Boolean(body?.mineSnapshot?.active),
         sourceQuestIdsJson: JSON.stringify(Array.isArray(body?.mineSnapshot?.sourceQuestIds) ? body.mineSnapshot.sourceQuestIds : []),
         displayNamesJson: JSON.stringify(Array.isArray(body?.mineSnapshot?.displayNames) ? body.mineSnapshot.displayNames : []),
@@ -328,26 +328,20 @@ export default {
         defuseDisplayName: normalizeText(body?.mineSnapshot?.defuseDisplayName || ""),
         updatedAtEpochSeconds: now
       });
-      const authority = await env.DB.prepare(`
-        SELECT player_name AS playerName
-        FROM online_match_players
-        WHERE match_id = ?
-        ORDER BY joined_at_epoch_seconds ASC, player_name ASC
-        LIMIT 1
-      `).bind(matchId).first();
-      if (normalizePlayerName(authority?.playerName) === playerName) {
-        await upsertOnlinePowerState(env, {
-          matchId,
-          active: Boolean(body?.powerSlotSnapshot?.active),
-          slotId: normalizeText(body?.powerSlotSnapshot?.slotId || ""),
-          displayName: normalizeText(body?.powerSlotSnapshot?.displayName || ""),
-          deadlineEpochSeconds: Number(body?.powerSlotSnapshot?.remainingSeconds) >= 0
-            ? now + Math.max(0, Number(body?.powerSlotSnapshot?.remainingSeconds || 0))
-            : 0,
-          claimed: Boolean(body?.powerSlotSnapshot?.claimed),
-          updatedAtEpochSeconds: now
-        });
-      }
+      await upsertOnlinePowerState(env, {
+        matchId,
+        active: Boolean(body?.powerSlotSnapshot?.active),
+        slotId: normalizeText(body?.powerSlotSnapshot?.slotId || ""),
+        displayName: normalizeText(body?.powerSlotSnapshot?.displayName || ""),
+        deadlineEpochSeconds: Number(body?.powerSlotSnapshot?.remainingSeconds) >= 0
+          ? now + Math.max(0, Number(body?.powerSlotSnapshot?.remainingSeconds || 0))
+          : 0,
+        claimed: Boolean(body?.powerSlotSnapshot?.claimed),
+        resolutionNonce: Math.max(0, Number(body?.powerSlotSnapshot?.resolutionNonce || 0)),
+        buffResult: Boolean(body?.powerSlotSnapshot?.buffResult),
+        resolvedByPlayerName: normalizePlayerName(body?.powerSlotSnapshot?.resolvedByPlayerName || ""),
+        updatedAtEpochSeconds: now
+      });
       if (Array.isArray(body?.teamChestSlots)) {
         await upsertOnlineTeamChestState(env, {
           matchId,
@@ -974,16 +968,40 @@ async function ensureOnlineQueueTable(env) {
         )
       `).run();
       await env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS online_match_power_state (
+        CREATE TABLE IF NOT EXISTS online_match_power_state (
           match_id TEXT PRIMARY KEY,
           active INTEGER NOT NULL DEFAULT 0,
           slot_id TEXT NOT NULL DEFAULT '',
           display_name TEXT NOT NULL DEFAULT '',
           deadline_epoch_seconds INTEGER NOT NULL DEFAULT 0,
           claimed INTEGER NOT NULL DEFAULT 0,
+          resolution_nonce INTEGER NOT NULL DEFAULT 0,
+          buff_result INTEGER NOT NULL DEFAULT 0,
+          resolved_by_player_name TEXT NOT NULL DEFAULT '',
           updated_at_epoch_seconds INTEGER NOT NULL
         )
       `).run();
+      try {
+        await env.DB.prepare(`
+          ALTER TABLE online_match_power_state
+          ADD COLUMN resolution_nonce INTEGER NOT NULL DEFAULT 0
+        `).run();
+      } catch {
+      }
+      try {
+        await env.DB.prepare(`
+          ALTER TABLE online_match_power_state
+          ADD COLUMN buff_result INTEGER NOT NULL DEFAULT 0
+        `).run();
+      } catch {
+      }
+      try {
+        await env.DB.prepare(`
+          ALTER TABLE online_match_power_state
+          ADD COLUMN resolved_by_player_name TEXT NOT NULL DEFAULT ''
+        `).run();
+      } catch {
+      }
       await env.DB.prepare(`
         CREATE TABLE IF NOT EXISTS online_match_draft_states (
           match_id TEXT PRIMARY KEY,
@@ -1528,6 +1546,49 @@ async function upsertOnlineSlotClaims(env, state) {
   }
 
 async function upsertOnlineTeamMineState(env, state) {
+  const existing = await env.DB.prepare(`
+    SELECT
+      active AS active,
+      source_quest_ids_json AS sourceQuestIdsJson,
+      display_names_json AS displayNamesJson,
+      triggered_quest_id AS triggeredQuestId,
+      deadline_epoch_seconds AS deadlineEpochSeconds,
+      progress_quest_id AS progressQuestId,
+      progress_value AS progressValue,
+      progress_max AS progressMax,
+      defuse_quest_id AS defuseQuestId,
+      defuse_display_name AS defuseDisplayName
+    FROM online_match_team_mines
+    WHERE match_id = ? AND team_index = ?
+    LIMIT 1
+  `).bind(state.matchId, Number(state.teamIndex || 0)).first();
+  const existingSourceQuestIdsJson = String(existing?.sourceQuestIdsJson || "[]");
+  const existingDisplayNamesJson = String(existing?.displayNamesJson || "[]");
+  const incomingSourceQuestIds = parseJsonArray(state.sourceQuestIdsJson);
+  const incomingDisplayNames = parseJsonArray(state.displayNamesJson);
+  const sourceQuestIdsJson = parseJsonArray(existingSourceQuestIdsJson).length > 0
+    ? existingSourceQuestIdsJson
+    : JSON.stringify(incomingSourceQuestIds);
+  const displayNamesJson = parseJsonArray(existingDisplayNamesJson).length > 0
+    ? existingDisplayNamesJson
+    : JSON.stringify(incomingDisplayNames);
+  const triggeredQuestId = normalizeText(state.triggeredQuestId || "") || normalizeText(existing?.triggeredQuestId || "");
+  const deadlineEpochSeconds = Number(state.deadlineEpochSeconds || 0) > 0
+    ? Number(state.deadlineEpochSeconds || 0)
+    : Number(existing?.deadlineEpochSeconds || 0);
+  const progressQuestId = normalizeText(state.progressQuestId || "") || normalizeText(existing?.progressQuestId || "");
+  const progressValue = progressQuestId ? Math.max(
+    0,
+    Number(state.progressValue || 0),
+    Number(existing?.progressValue || 0)
+  ) : 0;
+  const progressMax = progressQuestId ? Math.max(
+    0,
+    Number(state.progressMax || 0),
+    Number(existing?.progressMax || 0)
+  ) : 0;
+  const defuseQuestId = normalizeText(state.defuseQuestId || "") || normalizeText(existing?.defuseQuestId || "");
+  const defuseDisplayName = normalizeText(state.defuseDisplayName || "") || normalizeText(existing?.defuseDisplayName || "");
   await env.DB.prepare(`
     INSERT INTO online_match_team_mines (
       match_id,
@@ -1559,21 +1620,59 @@ async function upsertOnlineTeamMineState(env, state) {
   `).bind(
     state.matchId,
     Number(state.teamIndex || 0),
-    state.active ? 1 : 0,
-    String(state.sourceQuestIdsJson || "[]"),
-    String(state.displayNamesJson || "[]"),
-    normalizeText(state.triggeredQuestId || ""),
-    Number(state.deadlineEpochSeconds || 0),
-    normalizeText(state.progressQuestId || ""),
-    Math.max(0, Number(state.progressValue || 0)),
-    Math.max(0, Number(state.progressMax || 0)),
-    normalizeText(state.defuseQuestId || ""),
-    normalizeText(state.defuseDisplayName || ""),
+    (state.active || Number(existing?.active || 0) !== 0) ? 1 : 0,
+    sourceQuestIdsJson,
+    displayNamesJson,
+    triggeredQuestId,
+    deadlineEpochSeconds,
+    progressQuestId,
+    progressValue,
+    progressMax,
+    defuseQuestId,
+    defuseDisplayName,
     Number(state.updatedAtEpochSeconds || 0)
   ).run();
 }
 
 async function upsertOnlinePowerState(env, state) {
+  const existing = await env.DB.prepare(`
+    SELECT
+      active AS active,
+      slot_id AS slotId,
+      display_name AS displayName,
+      deadline_epoch_seconds AS deadlineEpochSeconds,
+      claimed AS claimed,
+      resolution_nonce AS resolutionNonce,
+      buff_result AS buffResult,
+      resolved_by_player_name AS resolvedByPlayerName
+    FROM online_match_power_state
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(state.matchId).first();
+  const existingSlotId = normalizeText(existing?.slotId || "");
+  const incomingSlotId = normalizeText(state.slotId || "");
+  const resolvedSlotId = existingSlotId || incomingSlotId;
+  const resolvedDisplayName = normalizeText(existing?.displayName || "") || normalizeText(state.displayName || "");
+  const wasClaimed = Number(existing?.claimed || 0) !== 0;
+  const isNewClaim = !wasClaimed && Boolean(state.claimed) && !!resolvedSlotId && (!existingSlotId || existingSlotId === incomingSlotId);
+  const resolutionNonce = isNewClaim
+    ? Math.max(Number(existing?.resolutionNonce || 0) + 1, Number(state.resolutionNonce || 0), 1)
+    : Math.max(0, Number(existing?.resolutionNonce || 0), Number(state.resolutionNonce || 0));
+  const claimed = wasClaimed || Boolean(state.claimed);
+  const deadlineEpochSeconds = claimed
+    ? Math.max(0, Number(state.deadlineEpochSeconds || 0), Number(existing?.deadlineEpochSeconds || 0))
+    : Math.max(
+        0,
+        existingSlotId && incomingSlotId && existingSlotId !== incomingSlotId
+          ? Number(existing?.deadlineEpochSeconds || 0)
+          : Math.max(Number(state.deadlineEpochSeconds || 0), Number(existing?.deadlineEpochSeconds || 0))
+      );
+  const buffResult = isNewClaim
+    ? (state.buffResult ? 1 : 0)
+    : Math.max(0, Number(existing?.buffResult || 0));
+  const resolvedByPlayerName = isNewClaim
+    ? normalizePlayerName(state.resolvedByPlayerName || "")
+    : normalizePlayerName(existing?.resolvedByPlayerName || "");
   await env.DB.prepare(`
     INSERT INTO online_match_power_state (
       match_id,
@@ -1582,22 +1681,31 @@ async function upsertOnlinePowerState(env, state) {
       display_name,
       deadline_epoch_seconds,
       claimed,
+      resolution_nonce,
+      buff_result,
+      resolved_by_player_name,
       updated_at_epoch_seconds
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(match_id) DO UPDATE SET
       active = excluded.active,
       slot_id = excluded.slot_id,
       display_name = excluded.display_name,
       deadline_epoch_seconds = excluded.deadline_epoch_seconds,
       claimed = excluded.claimed,
+      resolution_nonce = excluded.resolution_nonce,
+      buff_result = excluded.buff_result,
+      resolved_by_player_name = excluded.resolved_by_player_name,
       updated_at_epoch_seconds = excluded.updated_at_epoch_seconds
   `).bind(
     state.matchId,
-    state.active ? 1 : 0,
-    normalizeText(state.slotId || ""),
-    normalizeText(state.displayName || ""),
-    Number(state.deadlineEpochSeconds || 0),
-    state.claimed ? 1 : 0,
+    (state.active || Number(existing?.active || 0) !== 0) ? 1 : 0,
+    resolvedSlotId,
+    resolvedDisplayName,
+    deadlineEpochSeconds,
+    claimed ? 1 : 0,
+    resolutionNonce,
+    buffResult,
+    resolvedByPlayerName,
     Number(state.updatedAtEpochSeconds || 0)
   ).run();
 }
@@ -1776,16 +1884,19 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
       defuse_quest_id AS defuseQuestId,
       defuse_display_name AS defuseDisplayName
     FROM online_match_team_mines
-    WHERE match_id = ? AND team_index = ?
+    WHERE match_id = ? AND team_index = 0
     LIMIT 1
-  `).bind(matchId, viewerTeamIndex).first();
+  `).bind(matchId).first();
   const powerStateRow = await env.DB.prepare(`
     SELECT
       active AS active,
       slot_id AS slotId,
       display_name AS displayName,
       deadline_epoch_seconds AS deadlineEpochSeconds,
-      claimed AS claimed
+      claimed AS claimed,
+      resolution_nonce AS resolutionNonce,
+      buff_result AS buffResult,
+      resolved_by_player_name AS resolvedByPlayerName
     FROM online_match_power_state
     WHERE match_id = ?
     LIMIT 1
@@ -1846,7 +1957,10 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
       remainingSeconds: Number(powerStateRow?.deadlineEpochSeconds || 0) > 0
         ? Math.max(0, Number(powerStateRow?.deadlineEpochSeconds || 0) - Math.floor(Date.now() / 1000))
         : -1,
-      claimed: Number(powerStateRow?.claimed || 0) !== 0
+      claimed: Number(powerStateRow?.claimed || 0) !== 0,
+      resolutionNonce: Math.max(0, Number(powerStateRow?.resolutionNonce || 0)),
+      buffResult: Number(powerStateRow?.buffResult || 0) !== 0,
+      resolvedByPlayerName: normalizePlayerName(powerStateRow?.resolvedByPlayerName || "")
     },
     draftState: draftStateRow?.stateJson ? normalizeDraftState(parseJsonObject(draftStateRow.stateJson)) : null,
     chatMessages: (chatResult.results || [])
