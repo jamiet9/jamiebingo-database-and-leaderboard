@@ -426,10 +426,12 @@ export default {
       const existingCurrentTurnPlayer = existingTurnOrder.length > 0
         ? existingTurnOrder[Math.max(0, Number(existingDraftState?.turnIndex || 0)) % existingTurnOrder.length]
         : "";
-      const canPublishInitial = !existingDraftState && hostPlayerName && hostPlayerName === playerName;
-      const canPublishTurnAdvance = !!existingDraftState
-        && !!existingCurrentTurnPlayer
-        && existingCurrentTurnPlayer === playerName;
+        const normalizedHost = normalizePlayerName(hostPlayerName).toLowerCase();
+        const normalizedPlayer = normalizePlayerName(playerName).toLowerCase();
+        const canPublishInitial = !existingDraftState && normalizedHost && normalizedHost === normalizedPlayer;
+        const canPublishTurnAdvance = !!existingDraftState
+          && !!existingCurrentTurnPlayer
+          && normalizePlayerName(existingCurrentTurnPlayer).toLowerCase() === normalizedPlayer;
       if (!canPublishInitial && !canPublishTurnAdvance) {
         return Response.json({ status: "error", message: "Only the host can publish draft state" }, {
           status: 403,
@@ -521,9 +523,9 @@ export default {
       };
       const now = Math.floor(Date.now() / 1000);
       await env.DB.prepare(`
-        UPDATE online_match_draft_states
-        SET state_json = ?, updated_at_epoch_seconds = ?
-        WHERE match_id = ?
+          UPDATE online_match_draft_states
+          SET state_json = ?, updated_at_epoch_seconds = ?
+          WHERE match_id = ?
       `).bind(JSON.stringify(draftState), now, matchId).run();
       await env.DB.prepare(`
         UPDATE online_matches
@@ -2249,18 +2251,17 @@ function resolveCardSizeValue(rng, preferenceObjects) {
   return Number.isFinite(parsed) ? parsed : 5;
 }
 
-function resolveWorldType(rng, preferenceObjects) {
-  return Number(resolveEnumPreference(rng, preferenceObjects, "worldTypeMode", ["0", "1", "3", "4"], "0") || 0);
-}
+  function resolveWorldType(rng, preferenceObjects) {
+  return Number(resolveEnumPreference(rng, preferenceObjects, "worldTypeMode", ["0", "1", "3"], "0") || 0);
+  }
 
-function resolveWorldTypeLabel(worldTypeMode) {
-  return ({
-    0: "Normal",
-    1: "Amplified",
-    3: "Custom Biome Size",
-    4: "Single Biome"
-  })[Number(worldTypeMode || 0)] || "Normal";
-}
+  function resolveWorldTypeLabel(worldTypeMode) {
+    return ({
+      0: "Normal",
+      1: "Amplified",
+      3: "Custom Biome Size"
+    })[Number(worldTypeMode || 0)] || "Normal";
+  }
 
 function resolvePrelitPortals(rng, preferenceObjects) {
   return Number(resolveEnumPreference(rng, preferenceObjects, "prelitPortalsMode", ["0", "1", "2", "3"], "0") || 0);
