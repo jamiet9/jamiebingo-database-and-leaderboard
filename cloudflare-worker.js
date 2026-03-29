@@ -1461,9 +1461,14 @@ function normalizeDraftState(value) {
         y: Math.max(0, Number(value.pendingPick.y || 0))
       }
     : null;
+  const active = Boolean(value.active);
+  const finished = Boolean(value.finished);
+  if (!active && !finished && turnOrder.length === 0 && choices.length === 0 && slots.length === 0 && !pending?.playerName) {
+    return null;
+  }
   return {
-    active: Boolean(value.active),
-    finished: Boolean(value.finished),
+    active,
+    finished,
     hostPlayerName: normalizePlayerName(value.hostPlayerName),
     turnOrder,
     turnIndex: Math.max(0, Number(value.turnIndex || 0)),
@@ -1837,7 +1842,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
         : -1,
       claimed: Number(powerStateRow?.claimed || 0) !== 0
     },
-    draftState: normalizeDraftState(parseJsonObject(draftStateRow?.stateJson)),
+    draftState: draftStateRow?.stateJson ? normalizeDraftState(parseJsonObject(draftStateRow.stateJson)) : null,
     chatMessages: (chatResult.results || [])
       .filter((row) => {
         const channel = normalizeOnlineChatChannel(row.channel);
