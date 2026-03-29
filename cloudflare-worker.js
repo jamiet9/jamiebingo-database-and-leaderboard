@@ -2006,7 +2006,12 @@ function computeOnlineMatchOutcome(matchPayload, players, drawVoters) {
   }
   if (activeTeams.size === 1 && normalizedPlayers.length > 1) {
     const winner = Array.from(activeTeams.values())[0];
-    return { resultState: "winner", resultMessage: "Won by elimination.", winnerPlayerNames: winner.players };
+    const anyForfeits = forfeitedPlayers.size > 0;
+    return {
+      resultState: "winner",
+      resultMessage: anyForfeits ? "Won after the other player forfeited or disconnected." : "Won by elimination.",
+      winnerPlayerNames: winner.players
+    };
   }
 
   const win = String(matchPayload?.win || "").toUpperCase();
@@ -2014,7 +2019,7 @@ function computeOnlineMatchOutcome(matchPayload, players, drawVoters) {
   if (win === "LINE") {
     for (const team of activeTeams.values()) {
       if (team.completedLines > 0) {
-        return { resultState: "winner", resultMessage: "Completed a line.", winnerPlayerNames: team.players };
+        return { resultState: "winner", resultMessage: "Triggered the line win condition.", winnerPlayerNames: team.players };
       }
     }
   }
@@ -2022,7 +2027,7 @@ function computeOnlineMatchOutcome(matchPayload, players, drawVoters) {
     const targetSlots = cardSize * cardSize;
     for (const team of activeTeams.values()) {
       if (team.completedSlotCount >= targetSlots) {
-        return { resultState: "winner", resultMessage: "Completed the card.", winnerPlayerNames: team.players };
+        return { resultState: "winner", resultMessage: "Triggered the full-card win condition.", winnerPlayerNames: team.players };
       }
     }
   }
