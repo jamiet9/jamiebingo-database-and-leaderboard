@@ -1007,16 +1007,26 @@ async function ensureOnlineQueueTable(env) {
     }
       await env.DB.prepare(`
         CREATE TABLE IF NOT EXISTS online_match_runtime_states (
-        match_id TEXT NOT NULL,
-        player_name TEXT NOT NULL,
-        score INTEGER NOT NULL DEFAULT 0,
-        completed_lines INTEGER NOT NULL DEFAULT 0,
-        preferred_color_id INTEGER NOT NULL DEFAULT -1,
-        completed_slot_ids_json TEXT NOT NULL DEFAULT '[]',
-        updated_at_epoch_seconds INTEGER NOT NULL,
-        PRIMARY KEY (match_id, player_name)
-      )
-    `).run();
+          match_id TEXT NOT NULL,
+          player_name TEXT NOT NULL,
+          score INTEGER NOT NULL DEFAULT 0,
+          completed_lines INTEGER NOT NULL DEFAULT 0,
+          preferred_color_id INTEGER NOT NULL DEFAULT -1,
+          completed_slot_ids_json TEXT NOT NULL DEFAULT '[]',
+          updated_at_epoch_seconds INTEGER NOT NULL,
+          PRIMARY KEY (match_id, player_name)
+        )
+      `).run();
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS online_match_shared_spawns (
+          match_id TEXT PRIMARY KEY,
+          x INTEGER NOT NULL,
+          y INTEGER NOT NULL,
+          z INTEGER NOT NULL,
+          published_by_player_name TEXT NOT NULL DEFAULT '',
+          updated_at_epoch_seconds INTEGER NOT NULL
+        )
+      `).run();
     await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS online_match_chat_messages (
         message_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1459,6 +1469,10 @@ async function clearActiveMatch(env, matchId) {
     WHERE match_id = ?
   `).bind(matchId).run();
   await env.DB.prepare(`
+    DELETE FROM online_match_shared_spawns
+    WHERE match_id = ?
+  `).bind(matchId).run();
+  await env.DB.prepare(`
     DELETE FROM online_match_chat_messages
     WHERE match_id = ?
   `).bind(matchId).run();
@@ -1548,10 +1562,35 @@ async function upsertOnlineRuntimeState(env, state) {
     state.playerName,
     Math.max(0, Number(state.score || 0)),
     Math.max(0, Number(state.completedLines || 0)),
-    Number.isFinite(Number(state.preferredColorId)) ? Number(state.preferredColorId) : -1,
-    String(state.completedSlotIdsJson || "[]"),
-    Number(state.updatedAtEpochSeconds || 0)
-  ).run();
+      Number.isFinite(Number(state.preferredColorId)) ? Number(state.preferredColorId) : -1,
+      String(state.completedSlotIdsJson || "[]"),
+      Number(state.updatedAtEpochSeconds || 0)
+    ).run();
+  if (Number(state.spawnPublished || 0) !== 0) {
+    const x = Math.floor(Number(state.spawnX || 0));
+    const y = Math.floor(Number(state.spawnY || 0));
+    const z = Math.floor(Number(state.spawnZ || 0));
+    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) && y > 0) {
+      await env.DB.prepare(`
+        INSERT INTO online_match_shared_spawns (
+          match_id,
+          x,
+          y,
+          z,
+          published_by_player_name,
+          updated_at_epoch_seconds
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(match_id) DO NOTHING
+      `).bind(
+        state.matchId,
+        x,
+        y,
+        z,
+        state.playerName || "",
+        Number(state.updatedAtEpochSeconds || 0)
+      ).run();
+    }
+  }
 }
 
 async function loadOnlineMatchHostPlayerName(env, matchId) {
@@ -2113,6 +2152,16 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     WHERE match_id = ?
     LIMIT 1
   `).bind(matchId).first();
+  const sharedSpawnRow = await env.DB.prepare(`
+    SELECT
+      x AS x,
+      y AS y,
+      z AS z,
+      published_by_player_name AS publishedByPlayerName
+    FROM online_match_shared_spawns
+    WHERE match_id = ?
+    LIMIT 1
+  `).bind(matchId).first();
   const slotOwnershipTeamIndices = {};
   for (const row of slotClaimsResult.results || []) {
     const slotId = normalizeChatMessage(row?.slotId);
@@ -2136,6 +2185,10 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     drawVotes: drawVoters.size,
     activePlayers: players.filter((player) => !player.forfeited).length,
     syncedPlayerCount,
+    sharedSpawnX: Number(sharedSpawnRow?.x || 0),
+    sharedSpawnY: Number(sharedSpawnRow?.y || 0),
+    sharedSpawnZ: Number(sharedSpawnRow?.z || 0),
+    sharedSpawnPublishedByPlayerName: normalizePlayerName(sharedSpawnRow?.publishedByPlayerName),
     localDrawVoted: playerName ? drawVoters.has(playerName) : false,
     localForfeited: playerName ? forfeitedPlayers.has(playerName) : false,
     resultState: outcome.resultState,
