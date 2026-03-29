@@ -1706,7 +1706,8 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
       COALESCE(r.score, 0) AS score,
       COALESCE(r.completed_lines, 0) AS completedLines,
       COALESCE(r.preferred_color_id, -1) AS preferredColorId,
-      COALESCE(r.completed_slot_ids_json, '[]') AS completedSlotIdsJson
+      COALESCE(r.completed_slot_ids_json, '[]') AS completedSlotIdsJson,
+      COALESCE(r.updated_at_epoch_seconds, 0) AS updatedAtEpochSeconds
     FROM online_match_players p
     LEFT JOIN online_match_runtime_states r
       ON r.match_id = p.match_id AND r.player_name = p.player_name
@@ -1744,8 +1745,10 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     completedLines: Number(row.completedLines || 0),
     preferredColorId: Number(row.preferredColorId ?? -1),
     completedSlotIds: parseJsonArray(row.completedSlotIdsJson),
+    synced: Number(row.updatedAtEpochSeconds || 0) > 0,
     forfeited: forfeitedPlayers.has(normalizePlayerName(row.playerName))
   }));
+  const syncedPlayerCount = players.filter((player) => player.synced && !player.forfeited).length;
   const teamCompletedSlotIds = Array.from(new Set(
     players
       .filter((player) => Number(player.teamIndex || 0) === viewerTeamIndex)
@@ -1811,6 +1814,7 @@ async function buildOnlineRuntimeSnapshot(env, matchId, chatCursor, playerName) 
     players,
     drawVotes: drawVoters.size,
     activePlayers: players.filter((player) => !player.forfeited).length,
+    syncedPlayerCount,
     localDrawVoted: playerName ? drawVoters.has(playerName) : false,
     localForfeited: playerName ? forfeitedPlayers.has(playerName) : false,
     resultState: outcome.resultState,
